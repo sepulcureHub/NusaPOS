@@ -1,76 +1,166 @@
-# 🌊 NusaPOS — Sistem Kasir Digital Nusantara
+# NusaPOS
 
-POS lengkap untuk UMKM Indonesia: **Kasir, Produk, Transaksi + Refund, Analitik grafik, Pengaturan** — dibangun dengan stack terbaru (per akhir 2026):
+**Sistem Point of Sale (POS) berbasis web untuk UMKM Indonesia** — dibangun dengan Next.js, React, TypeScript, dan Tailwind CSS.
 
-| Teknologi | Versi |
+NusaPOS dirancang sebagai aplikasi kasir modern dengan fitur:
+
+- Kasir cepat untuk admin & kasir
+- Katalog produk, promo harian, dan paket bundling
+- Program member berbasis **akumulasi belanja**
+- Sistem poin yang bisa ditukar hadiah
+- Portal member mandiri
+- Shift kasir dengan tutup otomatis
+- Notifikasi aktivitas sistem
+- Halaman pelanggan / landing page
+- Integrasi peta Google Maps untuk lokasi toko
+- Penyimpanan lokal demo menggunakan `localStorage`
+
+> Proyek ini adalah **demo lokal / prototype operasional**, bukan backend produksi.  
+> Semua data disimpan di browser perangkat yang sedang digunakan.
+
+---
+
+## Daftar Isi
+
+- [Tech Stack](#tech-stack)
+- [Fitur Utama](#fitur-utama)
+- [Role Pengguna](#role-pengguna)
+- [Alur Login](#alur-login)
+- [Sistem Member](#sistem-member)
+- [Sistem Poin & Hadiah](#sistem-poin--hadiah)
+- [Mode Uji Admin di Kasir](#mode-uji-admin-di-kasir)
+- [Notifikasi Sistem](#notifikasi-sistem)
+- [Sinkronisasi Data Produk](#sinkronisasi-data-produk)
+- [Struktur Folder](#struktur-folder)
+- [Instalasi](#instalasi)
+- [Environment Variables](#environment-variables)
+- [Scripts](#scripts)
+- [Akun Demo](#akun-demo)
+- [Halaman Utama](#halaman-utama)
+- [Data & Backup](#data--backup)
+- [Deployment](#deployment)
+- [Known Limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Tech Stack
+
+| Teknologi | Keterangan |
 |---|---|
-| Next.js (App Router, Turbopack) | 16.x |
-| React | 19.x |
-| TypeScript | 5.x |
-| Tailwind CSS | 4.x |
-| Grafik | SVG custom interaktif (tanpa library chart) |
+| Next.js | Framework React full-stack |
+| React | UI library |
+| TypeScript | Static typing |
+| Tailwind CSS | Styling utility-first |
+| localStorage | Penyimpanan demo lokal |
+| Google Maps Embed | Peta lokasi toko |
+| Nominatim / Photon | Fallback geocoding publik |
 
-## ✨ Fitur
+Versi yang digunakan pada project ini:
 
-- **Kasir**: grid produk + kategori, pencarian (`/` fokus, `Enter` tambah), keranjang dengan stepper qty, diskon Rp/%, pilih/tambah pelanggan, tahan order (hold & resume), PPN + service otomatis, bayar **Tunai (keypad + kembalian + uang pas)**, **QRIS (simulasi QR)**, **Kartu (simulasi EDC)**, struk thermal + **cetak**, stok berkurang otomatis, efek suara.
-- **Dashboard**: KPI hari ini vs kemarin + sparkline, tren 14 hari, donat kategori, transaksi terbaru, alert stok menipis + restok cepat, aksi cepat.
-- **Produk**: CRUD lengkap (drawer form + validasi + emoji picker), cari/filter/sort, **drag & drop reorder**, **bulk select** (aktifkan/nonaktifkan/hapus/CSV), **saved views**, **undo** setelah hapus, toggle aktif, adjust stok inline.
-- **Transaksi**: filter periode/metode/status + pencarian, pagination, **drawer detail + struk**, **refund** (stok kembali, bisa di-undo), cetak, ekspor CSV.
-- **Analitik**: periode 7/30/90 hari, perbandingan periode sebelumnya, tren pendapatan, pangsa kategori, jam sibuk, **heatmap hari×jam**, split metode bayar, produk terlaris, insight otomatis, ekspor laporan CSV.
-- **Pengaturan**: profil toko & footer struk (live), PPN/service/batas stok, 3 tema aksen, suara on/off, **backup/restore JSON**, acak ulang data demo.
-- Data demo 90 hari ter-seed deterministik, persist di `localStorage`, responsif desktop & mobile (bottom nav + cart sheet).
+- Next.js 16
+- React 19
+- TypeScript 5
+- Tailwind CSS v4
 
-## 🚀 Setup Langkah demi Langkah
+---
 
-### 1. Prasyarat
-- **Node.js ≥ 20.9** (disarankan 22 LTS) → cek: `node -v`
-- npm (bawaan Node). Install Node dari https://nodejs.org bila belum ada.
+## Fitur Utama
 
-### 2. Buat folder proyek
-```bash
-mkdir nusapos && cd nusapos
-```
-Salin **semua file** dari deliverable ini sesuai struktur folder (buat folder `app/`, `components/`, `lib/`, lalu subfolder `app/kasir`, `app/produk`, `app/transaksi`, `app/analitik`, `app/pengaturan`).
+### 1. Kasir Cepat
 
-> Alternatif: `npx create-next-app@latest nusapos --typescript --tailwind --app --no-src-dir --import-alias "@/*"` lalu timpa file bawaan dengan file di atas dan samakan `package.json`-nya.
+Halaman `/kasir` digunakan untuk:
 
-### 3. Install dependency
-```bash
-npm install
-```
+- memilih produk
+- menambah item ke cart
+- memilih pelanggan/member
+- menerapkan diskon member otomatis
+- membayar Tunai / QRIS / Kartu
+- mencetak struk
+- menahan order
+- membuka/menutup shift kasir
 
-### 4. Jalankan development server
-```bash
-npm run dev
-```
-Buka **http://localhost:3000** — data demo langsung terisi.
+Kasir hanya bisa bekerja jika sedang memiliki **shift aktif**.
 
-### 5. Alur coba cepat
-1. **Kasir** → klik beberapa produk → atur diskon → **Bayar** → pilih Tunai, tekan "Uang Pas" → **Konfirmasi** → struk muncul → **Cetak Struk** / **Transaksi Baru**.
-2. **Transaksi** → klik baris → drawer struk → coba **Refund** lalu **Urungkan** dari toast.
-3. **Produk** → drag baris (sort "Urutan manual") → centang beberapa → hapus → undo.
-4. **Analitik** → ganti periode 7/30/90 & toggle Bandingkan → hover grafik.
-5. **Pengaturan** → ubah PPN/nama toko/aksen → lihat efeknya langsung di kasir & struk.
+---
 
-### 6. Build production
-```bash
-npm run build
-npm start
-```
+### 2. Katalog Produk
 
-### 7. Deploy (Vercel, paling mulus untuk Next.js)
-1. Push folder ke GitHub.
-2. https://vercel.com → **Add New Project** → import repo → framework terdeteksi otomatis → **Deploy**.
+Halaman `/produk` dikelola oleh admin.
 
-## 🛠 Troubleshooting
+Fitur produk:
 
-| Masalah | Solusi |
-|---|---|
-| Port 3000 terpakai | `npm run dev -- -p 3001` |
-| Build gagal download font | `next/font/google` butuh internet saat build; ulangi saat online |
-| Data aneh / ingin mulai bersih | Pengaturan → **Acak Ulang Data Demo**, atau hapus key `nusapos:v1` di DevTools → Application → Local Storage |
-| Error aneh setelah ubah versi | Hapus `.next` dan `node_modules`, lalu `npm install` lagi |
-| Node versi lama | Next 16 wajib Node ≥ 20.9 |
+- nama produk
+- SKU
+- kategori
+- harga jual
+- HPP
+- stok
+- deskripsi
+- emoji / foto
+- status aktif
+- diskon dasar
+- promo harian
+- hari ketersediaan
+- produk satuan
+- produk bundling / paket
 
-## 📌 Catatan Produksi
-Demo ini 100% client-side (localStorage) dan pembayaran QRIS/Kartu adalah **simulasi**. Untuk produksi: tambahkan database (mis. Prisma + Postgres via Route Handlers/Server Actions), auth, dan payment gateway (Midtrans/Xendit) — struktur `lib/store.tsx` (reducer + action) sudah memisahkan logika mutasi sehingga mudah dipindah ke API.
+Contoh kategori:
+
+- Kopi
+- Non-Kopi
+- Makanan
+- Cemilan
+- Ritel
+
+---
+
+### 3. Promo Harian
+
+Promo bisa dijadwalkan berdasarkan hari:
+
+- Senin
+- Selasa
+- Rabu
+- Kamis
+- Jumat
+- Sabtu
+- Minggu
+
+Promo harian menimpa diskon dasar jika keduanya aktif pada hari yang sama.
+
+Contoh:
+
+- Diskon dasar: 10%
+- Promo Kamis: 20%
+
+Maka pada hari Kamis harga menggunakan promo 20%.
+
+---
+
+### 4. Paket Bundling
+
+Produk bisa berbentuk paket, misalnya:
+
+- Paket Ngopi Berdua
+- Paket Sarapan Nusantara
+- Paket Kerja Fokus
+
+Sistem menghitung:
+
+- harga normal dari isi paket
+- harga paket
+- penghematan
+- stok porsi
+- ketersediaan hari
+
+---
+
+### 5. Halaman Pelanggan
+
+Route:
+
+```txt
+/beranda
