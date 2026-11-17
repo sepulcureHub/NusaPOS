@@ -1,0 +1,1 @@
+export const GEO_TILE_ATTRIBUTION = "© OpenStreetMap contributors · © CARTO";
