@@ -13,7 +13,6 @@ import {
   discountLabel, effectivePrice, hasDiscount, isAvailableOn, isAvailableToday, isLimited,
   nextAvailableDay, promoDays, promoForDay, stockOf, todayPromo,
 } from "@/lib/pricing";
-import { TIERS, TIER_COLOR, totalTierPct } from "@/lib/member";
 import { ProductThumb } from "./ProductThumb";
 import { SearchField } from "./SearchField";
 import { Marquee } from "./Marquee";
@@ -735,30 +734,6 @@ export function LandingPage() {
 
             <Reveal delay={80}>
               <div className="mt-6"><MemberBenefitsPanel settings={s} /></div>
-            </Reveal>
-
-            <Reveal delay={140}>
-              <div className="card p-5 mt-4">
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <p className="text-sm font-bold flex items-center gap-1.5"><IStar size={15} className="text-amber" /> Simulasi kenaikan tier</p>
-                  <span className="text-[11px] text-faint ml-auto">Belanja {rupiah(100000)} per kunjungan</span>
-                </div>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {TIERS.map((tier) => {
-                    const pctT = totalTierPct(tier, s);
-                    const perVisit = Math.floor(100000 * (1 - pctT / 100) / Math.max(100, s.memberPointRate));
-                    return (
-                      <div key={tier} className="rounded-xl border border-line bg-surface p-3.5">
-                        <Badge color={TIER_COLOR[tier]}>{tier}</Badge>
-                        <p className="font-display font-bold text-xl mt-2">{pctT}%</p>
-                        <p className="text-[10.5px] text-faint">potongan per transaksi</p>
-                        <p className="text-[11px] text-mute mt-2 leading-snug">≈ {num(perVisit)} poin per kunjungan {rupiah(100000)} · hemat {rupiah(Math.round(100000 * pctT / 100))}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-faint mt-3 flex gap-1.5"><IInfo size={12} className="shrink-0 mt-0.5" /> Poin tidak pernah hangus selama kartu aktif, dan bisa ditukar hadiah di portal member.</p>
-              </div>
             </Reveal>
           </div>
         </section>

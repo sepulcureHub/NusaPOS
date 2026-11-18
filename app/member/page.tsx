@@ -10,14 +10,12 @@ import { CATEGORIES, CATEGORY_COLORS } from "@/lib/types";
 import { DEMO_SETTINGS } from "@/lib/demo-data";
 import { clamp, dateShort, download, num, rupiah, timeID, toCSV, uid } from "@/lib/format";
 import {
-  TIERS,
   TIER_COLOR,
   initials,
   isBirthday,
   memberDiscountPct,
   memberStats,
   nextTier,
-  tierBonus,
   tierOf,
   tierProgress,
   tierThresholds,
@@ -35,7 +33,7 @@ import {
 import { ProductThumb } from "@/components/ProductThumb";
 import { SearchField } from "@/components/SearchField";
 import { MemberForm } from "@/components/MemberForm";
-import { MemberBenefitsPanel } from "@/components/MemberBenefits";
+import { MemberBenefitsPanel, TierLadder } from "@/components/MemberBenefits";
 import {
   Badge,
   Button,
@@ -360,39 +358,17 @@ function BenefitTab() {
             </div>
 
             <div className="rounded-2xl border border-line bg-surface p-4">
-              <p className="text-xs font-bold mb-3 flex items-center gap-1.5">
-                <IShield size={13} className="text-accent" /> Penjelasan tier otomatis
-              </p>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {TIERS.map((tier) => {
-                  const bonus = tierBonus(tier, s);
-                  const need = tierThresholds(s)[tier];
-                  return (
-                    <div
-                      key={tier}
-                      className="rounded-xl border p-3"
-                      style={{
-                        borderColor: `color-mix(in srgb, ${TIER_COLOR[tier]} 32%, transparent)`,
-                        background: `color-mix(in srgb, ${TIER_COLOR[tier]} 7%, transparent)`,
-                      }}
-                    >
-                      <Badge color={TIER_COLOR[tier]}>
-                        <IStar size={10} /> {tier}
-                      </Badge>
-                      <p className="font-display font-bold text-xl mt-2" style={{ color: TIER_COLOR[tier] }}>
-                        {bonus}%
-                      </p>
-                      <p className="text-[10px] text-faint">bonus diskon tier</p>
-                      <p className="text-[11px] text-mute mt-2 leading-snug">
-                        Bonus {bonus}% + dasar {s.memberDiscountPct}%
-                      </p>
-                      <p className="text-[10px] text-faint mt-1">
-                        {need > 0 ? `Ambang belanja ${rupiah(need)}` : "Tanpa minimum belanja"}
-                      </p>
-                    </div>
-                  );
-                })}
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <p className="text-xs font-bold flex items-center gap-1.5">
+                  <IShield size={13} className="text-accent" /> Pratinjau penjelasan tier
+                </p>
+                <span className="text-[10.5px] text-faint ml-auto">Angka bonus = persis yang kamu atur di atas</span>
               </div>
+              <TierLadder settings={s} />
+              <p className="text-[11px] text-faint mt-3 flex gap-1.5">
+                <IInfo size={12} className="shrink-0 mt-0.5" />
+                Bonus tier dijumlahkan dengan potongan dasar {s.memberDiscountPct}% saat transaksi (maks 40%). Tampilan lengkap pelanggan bisa dicek lewat tombol pratinjau.
+              </p>
             </div>
 
             <Field label="Catatan benefit untuk pelanggan" hint="Tampil di halaman pelanggan, portal member, dan pratinjau benefit">
@@ -410,7 +386,7 @@ function BenefitTab() {
           </div>
         )}
 
-        <MemberBenefitsPanel settings={s} dense={!isAdmin} showSteps={!isAdmin} />
+        {!isAdmin && <MemberBenefitsPanel settings={s} dense showSteps />}
       </div>
 
       <Modal

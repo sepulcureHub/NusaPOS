@@ -7,18 +7,25 @@ import { useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
 import type { Customer } from "@/lib/types";
+import { CATEGORIES, CATEGORY_COLORS } from "@/lib/types";
 import { dateShort, num, rupiah, timeID } from "@/lib/format";
 import { hashPassword } from "@/lib/auth";
 import {
   TIER_COLOR, initials, isBirthday, memberDiscountPct, nextTier, normalizeUsername,
-  tierOf, tierProgress, totalTierPct,
+  tierOf, tierProgress,
 } from "@/lib/member";
+import {
+  DAY_FULL, activeDiscount, discountLabel, effectivePrice, hasDiscount,
+  isAvailableToday, isLimited, nextAvailableDay, stockOf, todayPromo,
+} from "@/lib/pricing";
 import { MemberLoginForm } from "@/components/MemberAuth";
 import { BrandLockup } from "@/components/Brand";
+import { ProductThumb } from "@/components/ProductThumb";
+import { SearchField } from "@/components/SearchField";
 import { Badge, Button, Confirm, EmptyState, Field, Input, Modal, PageSkel, Segmented } from "@/components/ui";
 import {
-  ICalendar, ICheckCircle, IClock, IGift, IHeart, IInfo, ILogOut,
-  IReceipt, IShield, IStar, IUser,
+  IArrowRight, IBox, ICalendar, ICheckCircle, IClock, IGift, IHeart, IInfo, ILogOut,
+  IPercent, IReceipt, IRefresh, IShield, IStar, ITag, IUser,
 } from "@/components/icons";
 import { IHistory } from "@/components/icons-extra";
 import { MemberBenefitsPanel } from "@/components/MemberBenefits";
@@ -57,7 +64,7 @@ function Portal() {
   const s = state.settings;
   const me = state.memberSession ? state.customers.find((c) => c.id === state.memberSession!.customerId) ?? null : null;
 
-  const [tab, setTab] = useState<"ringkasan" | "poin" | "transaksi" | "profil">("ringkasan");
+  const [tab, setTab] = useState<"ringkasan" | "produk" | "poin" | "transaksi" | "profil">("ringkasan");
   const [redeem, setRedeem] = useState<string | null>(null);
   const [changePin, setChangePin] = useState(false);
 
@@ -101,6 +108,7 @@ function Portal() {
   const myRedemptions = state.redemptions.filter((r) => r.customerId === me.id);
   const rewards = state.rewards.filter((r) => r.active);
   const bday = isBirthday(me);
+  const promoTodayCount = state.products.filter((p) => p.active && isAvailableToday(p) && hasDiscount(p)).length;
 
   const doRedeem = () => {
     const r = rewards.find((x) => x.id === redeem);
@@ -181,6 +189,7 @@ function Portal() {
         <Segmented value={tab} onChange={(v) => setTab(v as typeof tab)} className="w-full justify-center"
           options={[
             { v: "ringkasan", l: <>Ringkasan</> },
+            { v: "produk", l: <><IBox size={13} /> Produk & Promo</> },
             { v: "poin", l: <><IGift size={13} /> Poin & Hadiah</> },
             { v: "transaksi", l: <><IReceipt size={13} /> Transaksi</> },
             { v: "profil", l: <><IUser size={13} /> Profil</> },
@@ -188,6 +197,16 @@ function Portal() {
 
         {tab === "ringkasan" && (
           <div className="space-y-4">
+            <button onClick={() => { setTab("produk"); sfx.tap(); }}
+              className="card p-4 w-full text-left flex items-center gap-3 hover:border-line2 transition-colors">
+              <span className="w-10 h-10 rounded-xl grid place-items-center bg-amber text-amber-ink shrink-0"><IPercent size={18} /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">Produk & promo hari ini</span>
+                <span className="block text-[11px] text-faint mt-0.5">{promoTodayCount} promo aktif · lihat menu yang tersedia untukmu</span>
+              </span>
+              <IArrowRight size={16} className="text-accent shrink-0" />
+            </button>
+
             <div className="card p-5">
               <h2 className="font-display font-bold text-base flex items-center gap-2"><IHeart size={16} className="text-chili" /> Benefit kamu saat ini</h2>
               <div className="grid sm:grid-cols-3 gap-3 mt-4">
@@ -211,6 +230,8 @@ function Portal() {
             </div>
           </div>
         )}
+
+        {tab === "produk" && <MemberProducts pct={pct} />}
 
         {tab === "poin" && (
           <div className="space-y-4">
@@ -298,6 +319,152 @@ function Portal() {
         desc={`Poin kamu akan dipotong ${num(rewards.find((r) => r.id === redeem)?.cost ?? 0)}. Hadiah diklaim dengan menunjukkan riwayat ini ke kasir.`} />
 
       <ChangePinModal open={changePin} onClose={() => setChangePin(false)} me={me} />
+    </div>
+  );
+}
+
+/* ---------- PRODUK & PROMO (dibaca live dari katalog admin) ---------- */
+function MemberProducts({ pct }: { pct: number }) {
+  const { state } = useStore();
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("Semua");
+  const [promoOnly, setPromoOnly] = useState(false);
+  const [todayOnly, setTodayOnly] = useState(true);
+
+  const live = useMemo(() => state.products.filter((p) => p.active), [state.products]);
+
+  const list = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return live.filter((p) => {
+      if (cat !== "Semua" && p.category !== cat) return false;
+      if (todayOnly && !isAvailableToday(p)) return false;
+      if (promoOnly && !hasDiscount(p)) return false;
+      if (!needle) return true;
+      return (
+        p.name.toLowerCase().includes(needle) ||
+        p.sku.toLowerCase().includes(needle) ||
+        p.category.toLowerCase().includes(needle) ||
+        p.desc.toLowerCase().includes(needle)
+      );
+    });
+  }, [live, q, cat, promoOnly, todayOnly]);
+
+  const todayCount = live.filter((p) => isAvailableToday(p)).length;
+  const promoCount = live.filter((p) => isAvailableToday(p) && hasDiscount(p)).length;
+  const bundleCount = live.filter((p) => p.kind === "bundle").length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { l: "Tersedia hari ini", v: num(todayCount), c: "var(--pandan)", i: <IBox size={15} /> },
+          { l: "Promo hari ini", v: num(promoCount), c: "var(--amber)", i: <IPercent size={15} /> },
+          { l: "Paket bundling", v: num(bundleCount), c: "var(--violet)", i: <ITag size={15} /> },
+        ].map((x) => (
+          <div key={x.l} className="card p-3.5">
+            <span className="w-7 h-7 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>{x.i}</span>
+            <p className="text-[10px] text-faint font-bold uppercase tracking-wider mt-2">{x.l}</p>
+            <p className="font-display font-bold text-lg mt-0.5 tabular-nums" style={{ color: x.c }}>{x.v}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-bold flex items-center gap-1.5"><IBox size={16} className="text-accent" /> Produk & promo untukmu</p>
+          <Badge color="var(--pandan)">live</Badge>
+          <span className="text-[11px] text-faint ml-auto">Sinkron dengan katalog & promo yang diatur admin.</span>
+        </div>
+
+        <SearchField value={q} onChange={setQ} size="lg" count={list.length} countLabel="produk"
+          ariaLabel="Cari produk" placeholder="Cari nama, SKU, atau kategori…" onEscape={() => setQ("")} />
+
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button onClick={() => setCat("Semua")} className={`chip ${cat === "Semua" ? "chip-on" : ""}`}>Semua</button>
+          {CATEGORIES.map((c) => (
+            <button key={c} onClick={() => setCat(c)} className={`chip ${cat === c ? "chip-on" : ""}`}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[c] }} /> {c}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-line">
+          <button onClick={() => setTodayOnly((v) => !v)} className={`chip ${todayOnly ? "chip-on" : ""}`}>
+            <ICalendar size={12} /> Tersedia hari ini
+          </button>
+          <button onClick={() => setPromoOnly((v) => !v)} className={`chip ${promoOnly ? "chip-on" : ""}`}>
+            <IPercent size={12} /> Promo saja
+          </button>
+          {(q || cat !== "Semua" || promoOnly || !todayOnly) && (
+            <button onClick={() => { setQ(""); setCat("Semua"); setPromoOnly(false); setTodayOnly(true); }} className="chip">
+              <IRefresh size={12} /> Reset
+            </button>
+          )}
+          <span className="ml-auto text-[11px] text-faint">{list.length} produk</span>
+        </div>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="card">
+          <EmptyState emoji="📦" title="Tidak ada produk yang cocok" desc="Coba ubah kata kunci atau filter, atau lihat semua produk tanpa filter hari ini." />
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {list.map((p) => {
+            const eff = effectivePrice(p);
+            const st = stockOf(p, state.products);
+            const avail = isAvailableToday(p);
+            const promo = todayPromo(p);
+            const memberPrice = pct > 0 ? Math.round(eff * (1 - pct / 100)) : null;
+            return (
+              <div key={p.id} className="card overflow-hidden flex flex-col">
+                <div className="relative" style={{ aspectRatio: "4 / 3" }}>
+                  <ProductThumb name={p.name} photo={p.photo} category={p.category} fill rounded={0} />
+                  <span className="absolute top-1.5 left-1.5 flex flex-col items-start gap-1 pointer-events-none">
+                    {promo && <Badge color="var(--amber)"><IPercent size={9} /> {discountLabel(promo)}</Badge>}
+                    {!promo && hasDiscount(p) && <Badge color="var(--amber)">{discountLabel(activeDiscount(p))}</Badge>}
+                  </span>
+                  <span className="absolute top-1.5 right-1.5 flex flex-col items-end gap-1 pointer-events-none">
+                    {p.kind === "bundle" && <Badge color="var(--violet)"><ITag size={9} /> Paket</Badge>}
+                    {isLimited(p) && <Badge color="var(--magenta)">Limited</Badge>}
+                  </span>
+                  {(!avail || st <= 0) && (
+                    <span className="absolute inset-0 grid place-items-center px-1.5 pointer-events-none" style={{ background: "color-mix(in srgb, var(--bg) 66%, transparent)" }}>
+                      <span className="text-[9.5px] font-bold px-2 py-1 rounded-full bg-overlay border border-line2 text-center leading-snug">
+                        {st <= 0 ? "Habis" : `Tersedia ${DAY_FULL[nextAvailableDay(p) ?? 0]}`}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <div className="p-3 flex flex-col flex-1">
+                  <p className="text-[13px] font-bold leading-tight line-clamp-2">{p.name}</p>
+                  <p className="text-[9.5px] text-faint font-mono mt-0.5">{p.sku}</p>
+                  <div className="flex items-baseline gap-1.5 mt-1.5 flex-wrap">
+                    <span className="font-display font-bold text-accent text-base tabular-nums">{rupiah(eff)}</span>
+                    {hasDiscount(p) && <span className="text-[10px] text-faint line-through">{rupiah(p.price)}</span>}
+                  </div>
+                  {memberPrice !== null && (
+                    <p className="text-[10.5px] font-bold text-pandan mt-1">≈ {rupiah(memberPrice)} harga member</p>
+                  )}
+                  <div className="flex items-center justify-between mt-auto pt-2 border-t border-line mt-2">
+                    <span className="text-[9.5px] font-bold" style={{ color: st <= 0 ? "var(--chili)" : !avail ? "var(--amber)" : "var(--muted)" }}>
+                      {st <= 0 ? "Habis" : !avail ? "Belum tersedia" : p.kind === "bundle" ? `${num(st)} porsi` : `Stok ${num(st)}`}
+                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[p.category] }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="text-[11px] text-faint flex gap-1.5">
+        <IInfo size={13} className="shrink-0 mt-0.5" />
+        {pct > 0
+          ? `Harga member = perkiraan setelah potongan ${pct}% (belum termasuk PPN). Pembayaran langsung di kasir kedai.`
+          : "Pembayaran langsung di kasir kedai. Daftar member untuk dapat potongan tambahan."}
+      </p>
     </div>
   );
 }
