@@ -23,8 +23,8 @@ import { BrandLockup } from "./Brand";
 import { Badge, Button, Chip, IconBtn, Modal, Segmented } from "./ui";
 import {
   IArrowRight, IBox, ICalendar, ICheck, IChevronDown, IClock, IHeart, IInfo,
-  IMapPin, IMenu, IMoon, IPause, IPercent, IPhone, IPlay, IRegister, IRefresh,
-  ISparkle, IStar, IStore, ISun, ITag, IUserPlus, IX,
+  IMapPin, IMoon, IPause, IPercent, IPhone, IPlay, IRegister, IRefresh,
+  ISparkle, IStar, IStore, ISun, ITag, IUserPlus,
 } from "./icons";
 
 const SECTIONS = [
@@ -109,7 +109,6 @@ export function LandingPage() {
   const [promoSource, setPromoSource] = useState<"semua" | "terjadwal" | "dasar">("semua");
   const [promoDayOverride, setPromoDayOverride] = useState<number | null>(null);
   const [detail, setDetail] = useState<Product | null>(null);
-  const [navOpen, setNavOpen] = useState(false);
   const [active, setActive] = useState("promo");
   const [scrollY, setScrollY] = useState(0);
   const [now, setNow] = useState<number | null>(null);
@@ -200,8 +199,26 @@ export function LandingPage() {
     });
   }, [live, state.products, q, cat, onlyToday, hideOut, onlyFav, fav.ids]);
 
-  const marqueeMenu = todayMenu.length ? todayMenu : live;
-  const marqueePromo = useMemo(() => live.filter((p) => hasDiscount(p)), [live]);
+  /** Satu baris teks berjalan: produk tersedia hari ini + produk promo hari ini. */
+  const ticker = useMemo(() => {
+    const map = new Map<string, { p: Product; kind: "promo" | "tersedia" }>();
+
+    todayMenu.forEach((p) => {
+      map.set(p.id, { p, kind: hasDiscount(p) ? "promo" : "tersedia" });
+    });
+
+    live.filter(hasDiscount).forEach((p) => {
+      const cur = map.get(p.id);
+      if (!cur) map.set(p.id, { p, kind: "promo" });
+      else if (cur.kind !== "promo") map.set(p.id, { p: cur.p, kind: "promo" });
+    });
+
+    return [...map.values()].sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "promo" ? -1 : 1;
+      return a.p.name.localeCompare(b.p.name);
+    });
+  }, [todayMenu, live]);
+
   const waNumber = s.phone.replace(/[^0-9]/g, "").replace(/^0/, "62");
   const avgRating = DEMO_LANDING.testimonials.reduce((a, t) => a + t.rating, 0) / DEMO_LANDING.testimonials.length;
 
@@ -279,31 +296,18 @@ export function LandingPage() {
             <IconBtn label={resolved === "dark" ? "Mode terang" : "Mode gelap"} onClick={toggleTheme}>
               {resolved === "dark" ? <IMoon size={16} /> : <ISun size={16} />}
             </IconBtn>
-            {/* tombol masuk terpadu: staf & member */}
             {state.session ? (
               <Link href="/" className="btn btn-primary btn-sm"><IRegister size={14} /> Ruang staf</Link>
+            ) : state.memberSession ? (
+              <Link href="/memberku" className="btn btn-primary btn-sm"><IHeart size={14} /> Portal member</Link>
             ) : (
               <>
                 <Link href="/login" className="btn btn-primary btn-sm"><IRegister size={14} /> Masuk</Link>
                 <Link href="/memberku" className="btn btn-ghost btn-sm hidden sm:inline-flex"><IHeart size={14} /> Portal member</Link>
               </>
             )}
-            <IconBtn label="Menu" className="lg:hidden" onClick={() => setNavOpen((v) => !v)}>
-              {navOpen ? <IX size={17} /> : <IMenu size={17} />}
-            </IconBtn>
           </div>
         </div>
-        {navOpen && (
-          <div className="lg:hidden border-t border-line bg-bg2/95 backdrop-blur-xl anim-pop">
-            <div className="px-4 py-3 grid grid-cols-2 gap-2">
-              {SECTIONS.map((x) => (
-                <a key={x.id} href={`#${x.id}`} onClick={() => setNavOpen(false)}
-                  className="rounded-xl border border-line bg-surface px-3 py-2.5 text-xs font-bold">{x.label}</a>
-              ))}
-              <Link href="/login" className="rounded-xl border border-accent bg-accent-soft px-3 py-2.5 text-xs font-bold text-accent">Masuk</Link>
-            </div>
-          </div>
-        )}
       </header>
 
       <main className="relative z-10 pt-16">
@@ -390,11 +394,11 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* TEKS BERJALAN */}
+        {/* TEKS BERJALAN — 1 BARIS SAJA */}
         <section className="relative border-y border-line bg-surface/60 py-3">
           <div className="mx-auto max-w-[1280px] px-4 md:px-6 flex items-center gap-3 mb-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-faint inline-flex items-center gap-1.5">
-              <ISparkle size={12} className="text-accent" /> Kabar kedai hari ini
+              <ISparkle size={12} className="text-accent" /> Produk tersedia & promo hari ini
             </span>
             <div className="ml-auto flex items-center gap-1.5">
               <IconBtn label={mqPaused ? "Jalankan teks" : "Jeda teks"} active={!mqPaused} onClick={() => setMqPaused((v) => !v)}>
@@ -409,40 +413,37 @@ export function LandingPage() {
             </div>
           </div>
 
-          <Marquee speed={52 * mqSpeed} direction={mqFlip ? "right" : "left"} paused={mqPaused} gap={30}
-            ariaLabel="Daftar menu dan harga hari ini" className="py-1">
-            {marqueeMenu.map((p) => (
-              <span key={`m-${p.id}`} className="inline-flex items-center gap-2 text-[12.5px] font-bold whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[p.category] }} />
-                {p.name}
-                <span className="font-mono text-accent">{rupiah(effectivePrice(p))}</span>
-                {hasDiscount(p) && <span className="text-[10px] font-bold text-amber">hemat {rupiah(p.price - effectivePrice(p))}</span>}
-                <span className="text-faint">·</span>
+          <Marquee speed={46 * mqSpeed} direction={mqFlip ? "right" : "left"} paused={mqPaused} gap={34}
+            ariaLabel="Produk tersedia dan promo hari ini" className="py-1.5">
+            {ticker.length === 0 ? (
+              <span className="inline-flex items-center gap-2 text-[12.5px] font-bold whitespace-nowrap text-mute">
+                <ISparkle size={13} className="text-accent" /> Belum ada produk tersedia atau promo hari ini.
               </span>
-            ))}
+            ) : (
+              ticker.map(({ p, kind }) => (
+                <span key={`${kind}-${p.id}`} className="inline-flex items-center gap-2 text-[12.5px] font-bold whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[p.category] }} />
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                      kind === "promo" ? "bg-amber text-amber-ink" : "bg-accent-soft text-accent"
+                    }`}
+                  >
+                    {kind === "promo" ? "PROMO" : "TODAY"}
+                  </span>
+                  {p.name}
+                  <span className="font-mono text-accent">{rupiah(effectivePrice(p))}</span>
+                  {kind === "promo" && p.price > effectivePrice(p) && (
+                    <span className="text-[10px] font-bold text-pandan">hemat {rupiah(p.price - effectivePrice(p))}</span>
+                  )}
+                  <span className="text-faint">·</span>
+                </span>
+              ))
+            )}
           </Marquee>
 
-          <Marquee speed={34 * mqSpeed} direction={mqFlip ? "left" : "right"} paused={mqPaused} gap={34}
-            ariaLabel="Promo dan informasi kedai" className="py-1 mt-1">
-            {(marqueePromo.length ? marqueePromo : live).slice(0, 18).map((p) => (
-              <span key={`p-${p.id}`} className="inline-flex items-center gap-2 text-[11.5px] whitespace-nowrap text-mute">
-                <IPercent size={11} className="text-amber" />
-                {hasDiscount(p) ? `${p.name} — ${discountLabel(activeDiscount(p))}` : p.name}
-                {promoDays(p).length > 0 && <span className="text-faint">tiap {promoDays(p).map((d) => DAY_SHORT[d]).join("/")}</span>}
-                <span className="text-faint">·</span>
-              </span>
-            ))}
-            <span className="inline-flex items-center gap-2 text-[11.5px] whitespace-nowrap text-mute">
-              <IHeart size={11} style={{ color: "var(--violet)" }} /> Member: potongan {s.memberDiscountPct}% + bonus tier, poin bisa ditukar hadiah <span className="text-faint">·</span>
-            </span>
-            <span className="inline-flex items-center gap-2 text-[11.5px] whitespace-nowrap text-mute">
-              <IMapPin size={11} className="text-chili" /> {s.address} <span className="text-faint">·</span>
-            </span>
-            <span className="inline-flex items-center gap-2 text-[11.5px] whitespace-nowrap text-mute">
-              <IClock size={11} className="text-pandan" /> Buka {STORE_OPEN}–{STORE_CLOSE} setiap hari <span className="text-faint">·</span>
-            </span>
-          </Marquee>
-          <p className="mx-auto max-w-[1280px] px-4 md:px-6 text-[10px] text-faint mt-2">Arahkan kursor untuk menjeda · geser dengan jari untuk menelusuri.</p>
+          <p className="mx-auto max-w-[1280px] px-4 md:px-6 text-[10px] text-faint mt-2">
+            Arahkan kursor untuk menjeda · geser dengan jari untuk menelusuri.
+          </p>
         </section>
 
         {/* JANJI */}
@@ -702,7 +703,7 @@ export function LandingPage() {
                       Jadi member, <span className="text-grad">belanja makin murah</span> dan dapat hadiah.
                     </h2>
                     <p className="text-sm md:text-base text-mute mt-3 leading-relaxed">
-                      Daftar gratis di kasir, dapatkan PIN untuk masuk portal member. Tier naik otomatis dari total belanjamu,
+                      Daftar gratis di kasir, dapatkan username & PIN untuk masuk portal member. Tier naik otomatis dari total belanjamu,
                       dan setiap belanja mengumpulkan poin yang bisa ditukar hadiah.
                     </p>
                     <div className="flex flex-wrap gap-2.5 mt-5">

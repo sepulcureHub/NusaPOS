@@ -16,8 +16,8 @@ import { uid } from "./format";
 import { ALL_DAYS, makeSku, stockNeed } from "./pricing";
 import { attachShiftIds, backfillSessions } from "./shift";
 import { ACCENT_VALUES } from "./brand";
-import { can, isProtectedUser, shiftEligible } from "./auth";
-import { verifyPassword } from "./auth";
+import { can, isProtectedUser, shiftEligible, verifyPassword } from "./auth";
+import { normalizeUsername } from "./member";
 import type { Perm } from "./auth";
 
 const KEY = "nusapos:v1";
@@ -237,7 +237,7 @@ function core(state: AppState, a: Action): AppState {
     case "LOGOUT": return { ...state, session: null };
     case "MEMBER_LOGIN": {
       const c = state.customers.find((x) => x.id === a.customerId);
-      if (!c || !c.member || c.memberActive === false) return state;
+      if (!c || !c.member || c.memberActive === false || c.portal === false) return state;
       return { ...state, memberSession: { customerId: c.id, since: Date.now() } };
     }
     case "MEMBER_LOGOUT": return { ...state, memberSession: null };
@@ -350,7 +350,7 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
     case "LOGOUT": note = { kind: "auth", title: "Keluar dari sistem", actor: actorOf(state) }; break;
     case "MEMBER_LOGIN": {
       const c = state.customers.find((x) => x.id === a.customerId);
-      note = { kind: "member", title: "Member masuk ke portal", detail: `${c?.name ?? ""} · ${c?.memberNo ?? ""}`, actor: c?.name };
+      note = { kind: "member", title: "Member masuk ke portal", detail: `${c?.name ?? ""} · @${c?.username ?? c?.memberNo ?? ""}`, actor: c?.name };
       break;
     }
     case "MEMBER_LOGOUT": note = { kind: "member", title: "Member keluar dari portal", actor: "Portal member" }; break;
@@ -435,6 +435,7 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
 
 function reducer(state: AppState, a: Action): AppState {
   const next = core(state, a);
+  if (next === state) return state;
   return annotate(state, next, a);
 }
 
@@ -502,13 +503,37 @@ function normalizeCustomers(raw: Customer[] | undefined): Customer[] {
     };
   });
   if (!out.some((c) => c.id === WALK_IN_CUSTOMER.id)) out.unshift({ ...WALK_IN_CUSTOMER });
-  const seen = new Set<string>();
+
+  const seenNo = new Set<string>();
+  const seenUser = new Set<string>();
+
   return out.map((c) => {
-    if (!c.member || !c.memberNo) return c;
-    let no = c.memberNo; let n = 1;
-    while (seen.has(no)) { n++; no = `${c.memberNo}-${n}`; }
-    seen.add(no);
-    return no === c.memberNo ? c : { ...c, memberNo: no };
+    if (!c.member) return c;
+
+    let no = c.memberNo ?? "NUSA-0000";
+    let nNo = 1;
+    while (seenNo.has(no)) { nNo++; no = `${c.memberNo}-${nNo}`; }
+    seenNo.add(no);
+
+    let uname =
+      normalizeUsername(c.username ?? "") ||
+      normalizeUsername(no) ||
+      normalizeUsername(c.phone) ||
+      "member";
+
+    if (uname.length < 3) uname = `member${uname.replace(/[^a-z0-9]/g, "") || "01"}`;
+    uname = uname.slice(0, 20);
+
+    let finalUser = uname;
+    let nUser = 1;
+    while (seenUser.has(finalUser)) {
+      nUser++;
+      const suffix = `-${nUser}`;
+      finalUser = `${uname.slice(0, Math.max(1, 20 - suffix.length))}${suffix}`;
+    }
+    seenUser.add(finalUser);
+
+    return { ...c, memberNo: no, username: finalUser };
   });
 }
 
@@ -556,7 +581,9 @@ function normalize(raw: Partial<AppState>): AppState {
   let memberSession: AppState["memberSession"] = null;
   if (raw.memberSession && typeof raw.memberSession.customerId === "string") {
     const c = customers.find((x) => x.id === raw.memberSession!.customerId);
-    if (c && c.member && c.memberActive !== false) memberSession = { customerId: c.id, since: Number(raw.memberSession.since) || Date.now() };
+    if (c && c.member && c.memberActive !== false && c.portal !== false) {
+      memberSession = { customerId: c.id, since: Number(raw.memberSession.since) || Date.now() };
+    }
   }
 
   const transactions = Array.isArray(raw.transactions) ? raw.transactions.filter((t) => !t.isTest) : [];
@@ -567,6 +594,28 @@ function normalize(raw: Partial<AppState>): AppState {
     .map((x) => ({ ...x, autoCloseAt: x.autoCloseAt ?? null, closedBy: x.closedBy ?? (x.closedAt !== null ? "manual" : null), closingCash: x.closingCash ?? null }));
   shiftSessions = autoCloseSessions(shiftSessions, Date.now());
 
+  const rewards: PointReward[] = Array.isArray(raw.rewards)
+    ? raw.rewards
+        .filter((r) => r && typeof r.name === "string")
+        .map((r) => ({
+          id: r.id || uid(),
+          name: r.name,
+          emoji: r.emoji || "🎁",
+          desc: r.desc ?? "",
+          cost: Math.max(1, Number(r.cost) || 1),
+          active: r.active !== false,
+          createdAt: Number(r.createdAt) || Date.now(),
+        }))
+    : [];
+
+  const redemptions: Redemption[] = Array.isArray(raw.redemptions)
+    ? raw.redemptions.filter((r) => r && typeof r.customerId === "string" && typeof r.rewardId === "string")
+    : [];
+
+  const notifications: AppNotification[] = Array.isArray(raw.notifications)
+    ? raw.notifications.filter((n) => n && typeof n.title === "string" && typeof n.kind === "string").slice(0, MAX_NOTIFS)
+    : [];
+
   return {
     hydrated: true,
     products: normalizeProducts(Array.isArray(raw.products) ? raw.products : []),
@@ -575,9 +624,7 @@ function normalize(raw: Partial<AppState>): AppState {
     held: Array.isArray(raw.held) ? raw.held : [],
     views: Array.isArray(raw.views) ? raw.views : DEMO_VIEWS.map((v) => ({ ...v })),
     settings: s, users, session, shiftPlans, shiftSessions,
-    rewards: Array.isArray(raw.rewards) ? raw.rewards.filter((r) => r && typeof r.name === "string") : [],
-    redemptions: Array.isArray(raw.redemptions) ? raw.redemptions : [],
-    notifications: Array.isArray(raw.notifications) ? raw.notifications.slice(0, MAX_NOTIFS) : [],
+    rewards, redemptions, notifications,
     notifReadAt: Number(raw.notifReadAt) || 0,
     memberSession,
   };
@@ -635,10 +682,21 @@ export function useAuth() {
   return { user, role, isAdmin: role === "admin", can: (perm: Perm) => can(role, perm) };
 }
 
-/* Helper login member (dipakai portal). */
-export function verifyMemberPin(state: AppState, phone: string, pin: string): Customer | null {
-  const norm = phone.replace(/[^\d]/g, "");
-  const c = state.customers.find((x) => x.member && (x.phone.replace(/[^\d]/g, "") === norm || x.memberNo === phone.trim()));
+/* Helper login member: username + PIN. Fallback lama: memberNo / phone. */
+export function verifyMemberPin(state: AppState, identifier: string, pin: string): Customer | null {
+  const id = identifier.trim().toLowerCase();
+  if (!id) return null;
+  const digits = id.replace(/[^\d]/g, "");
+
+  const c = state.customers.find((x) =>
+    x.member &&
+    (
+      normalizeUsername(x.username ?? "") === id ||
+      (x.memberNo ?? "").toLowerCase() === id ||
+      (digits.length >= 8 && x.phone.replace(/[^\d]/g, "") === digits)
+    )
+  );
+
   if (!c || !c.pinHash || c.memberActive === false || c.portal === false) return null;
   return verifyPassword(pin, c.pinHash) ? c : null;
 }

@@ -3,21 +3,21 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useStore, verifyMemberPin } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
 import type { Customer } from "@/lib/types";
 import { dateShort, num, rupiah, timeID } from "@/lib/format";
 import { hashPassword } from "@/lib/auth";
-import { DEMO_MEMBER_PIN } from "@/lib/demo-data";
 import {
-  TIER_COLOR, initials, isBirthday, memberDiscountPct, nextTier, tierOf, tierProgress, totalTierPct,
+  TIER_COLOR, initials, isBirthday, memberDiscountPct, nextTier, normalizeUsername,
+  tierOf, tierProgress, totalTierPct,
 } from "@/lib/member";
-import { AuthField } from "@/components/AuthField";
+import { MemberLoginForm } from "@/components/MemberAuth";
 import { BrandLockup } from "@/components/Brand";
 import { Badge, Button, Confirm, EmptyState, Field, Input, Modal, PageSkel, Segmented } from "@/components/ui";
 import {
-  ICalendar, ICheckCircle, IClock, IGift, IHeart, IInfo, ILock, ILogOut, IPhone,
+  ICalendar, ICheckCircle, IClock, IGift, IHeart, IInfo, ILogOut,
   IReceipt, IShield, IStar, IUser,
 } from "@/components/icons";
 import { IHistory } from "@/components/icons-extra";
@@ -57,10 +57,6 @@ function Portal() {
   const s = state.settings;
   const me = state.memberSession ? state.customers.find((c) => c.id === state.memberSession!.customerId) ?? null : null;
 
-  const [phone, setPhone] = useState("");
-  const [pin, setPin] = useState("");
-  const [loginErr, setLoginErr] = useState("");
-  const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"ringkasan" | "poin" | "transaksi" | "profil">("ringkasan");
   const [redeem, setRedeem] = useState<string | null>(null);
   const [changePin, setChangePin] = useState(false);
@@ -69,24 +65,8 @@ function Portal() {
 
   if (!state.hydrated) return <PageSkel />;
 
-  const doLogin = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (busy) return;
-    if (!phone.trim() || !pin.trim()) { setLoginErr("Nomor HP dan PIN wajib diisi."); sfx.error(); return; }
-    setBusy(true); setLoginErr("");
-    setTimeout(() => {
-      const c = verifyMemberPin(state, phone, pin);
-      if (!c) { setBusy(false); setLoginErr("Nomor HP atau PIN salah, atau member belum diaktifkan."); sfx.error(); return; }
-      dispatch({ type: "MEMBER_LOGIN", customerId: c.id });
-      setBusy(false); setPin(""); setLoginErr("");
-      sfx.success();
-      push({ msg: `Halo, ${c.name} — selamat datang di portal member`, type: "ok" });
-    }, 400);
-  };
-
-  /* ---------- LOGIN MEMBER (textbox modern seperti halaman login) ---------- */
+  /* ---------- LOGIN MEMBER ---------- */
   if (!me) {
-    const demoMember = state.customers.find((c) => c.member && c.pinHash);
     return (
       <div className="relative min-h-dvh grid place-items-center px-4 py-10">
         <div className="aurora" aria-hidden><i /><i /><i /></div>
@@ -96,36 +76,14 @@ function Portal() {
             <div className="flex justify-center"><BrandLockup settings={s} size={34} /></div>
             <h1 className="font-display font-bold text-2xl text-center mt-5">Portal Member</h1>
             <p className="text-sm text-mute text-center mt-1.5 leading-relaxed">
-              Masuk memakai <b className="text-ink">nomor HP</b> dan <b className="text-ink">PIN</b> yang dibuatkan kasir saat kamu mendaftar.
+              Masuk memakai <b className="text-ink">username</b> dan <b className="text-ink">PIN</b> yang dibuatkan kasir saat kamu mendaftar.
             </p>
 
-            <form onSubmit={doLogin} className="mt-6 space-y-3.5">
-              <AuthField label="Nomor HP / No. member" value={phone}
-                onChange={(v) => { setPhone(v); setLoginErr(""); }}
-                icon={<IPhone size={17} />} placeholder="cth. 081333334444" inputMode="tel" autoComplete="tel"
-                onEnter={() => { }} />
-              <AuthField label="PIN member" type="password" value={pin}
-                onChange={(v) => { setPin(v); setLoginErr(""); }}
-                icon={<ILock size={17} />} placeholder="••••••" inputMode="numeric"
-                error={loginErr} onEnter={doLogin} />
-              <Button type="submit" className="w-full py-3.5" disabled={busy}
-                style={{ background: "linear-gradient(135deg, var(--violet), color-mix(in srgb, var(--violet) 65%, #000))" }}>
-                {busy ? "Memverifikasi…" : "Masuk ke akun member"}
-              </Button>
-            </form>
+            <div className="mt-6">
+              <MemberLoginForm redirect={null} />
+            </div>
 
-            {demoMember && (
-              <button type="button" onClick={() => { setPhone(demoMember.phone); setPin(DEMO_MEMBER_PIN); setLoginErr(""); sfx.tap(); }}
-                className="w-full mt-4 rounded-xl border border-dashed border-line2 px-3 py-2.5 text-[11px] text-mute hover:border-accent hover:text-accent transition-colors text-left">
-                Coba akun demo: <b className="text-ink">{demoMember.name}</b> · {demoMember.phone} · PIN <b className="text-ink">{DEMO_MEMBER_PIN}</b>
-              </button>
-            )}
-
-            <p className="text-[10.5px] text-faint mt-4 leading-relaxed flex gap-1.5">
-              <IInfo size={12} className="shrink-0 mt-0.5" />
-              Belum jadi member? Datang ke kasir dan minta didaftarkan — gratis, langsung dapat poin sambutan dan PIN.
-            </p>
-            <div className="flex justify-center gap-4 mt-4">
+            <div className="flex justify-center gap-4 mt-5">
               <Link href="/login" className="text-[11px] font-bold text-accent hover:underline">Login terpadu (staf & member)</Link>
               <Link href="/beranda" className="text-[11px] font-bold text-mute hover:underline">← Halaman kedai</Link>
             </div>
@@ -182,7 +140,7 @@ function Portal() {
             </span>
             <div className="min-w-0">
               <p className="font-display font-bold text-xl leading-tight">{me.name}</p>
-              <p className="text-[11px] text-faint font-mono">{me.memberNo} · {me.phone}</p>
+              <p className="text-[11px] text-faint font-mono">@{me.username ?? me.memberNo} · {me.phone}</p>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 <Badge color={TIER_COLOR[tier]}><IStar size={10} /> {tier}</Badge>
                 {pct > 0 && <Badge color="var(--pandan)">potongan {pct}%</Badge>}
@@ -245,7 +203,7 @@ function Portal() {
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-faint mt-3 flex gap-1.5"><IInfo size={13} className="shrink-0 mt-0.5" /> Angka benefit diatur kedai dan berlaku otomatis — cukup sebut nomor HP-mu saat di kasir.</p>
+              <p className="text-[11px] text-faint mt-3 flex gap-1.5"><IInfo size={13} className="shrink-0 mt-0.5" /> Angka benefit diatur kedai dan berlaku otomatis — cukup sebut username-mu saat di kasir.</p>
             </div>
             <div className="card p-5">
               <h2 className="font-display font-bold text-base mb-3">Semua benefit member</h2>
@@ -345,16 +303,35 @@ function Portal() {
 }
 
 function ProfileTab({ me, onChangePin }: { me: Customer; onChangePin: () => void }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const { push } = useToast();
-  const s = useStore().state.settings;
+  const s = state.settings;
+
   const [name, setName] = useState(me.name);
+  const [username, setUsername] = useState(me.username ?? "");
   const [email, setEmail] = useState(me.email ?? "");
   const [birthDate, setBirthDate] = useState(me.birthDate ?? "");
+  const [err, setErr] = useState("");
 
   const save = () => {
-    dispatch({ type: "UPDATE_CUSTOMER", customer: { ...me, name: name.trim() || me.name, email: email.trim(), birthDate } });
+    const uname = normalizeUsername(username);
+    if (!/^[a-z0-9._-]{3,20}$/.test(uname)) {
+      setErr("Username 3–20 karakter: huruf kecil, angka, titik, - atau _");
+      sfx.error();
+      return;
+    }
+    if (state.customers.some((c) => c.member && c.id !== me.id && normalizeUsername(c.username ?? "") === uname)) {
+      setErr("Username sudah dipakai member lain");
+      sfx.error();
+      return;
+    }
+
+    dispatch({
+      type: "UPDATE_CUSTOMER",
+      customer: { ...me, name: name.trim() || me.name, username: uname, email: email.trim(), birthDate },
+    });
     sfx.success();
+    setErr("");
     push({ msg: "Profil member diperbarui", type: "ok" });
   };
 
@@ -363,7 +340,10 @@ function ProfileTab({ me, onChangePin }: { me: Customer; onChangePin: () => void
       <h2 className="font-display font-bold text-base">Profil saya</h2>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Nama"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label="Nomor HP (login)" hint="Nomor hanya bisa diubah oleh kasir/admin"><Input value={me.phone} disabled /></Field>
+        <Field label="Username portal *" error={err} hint="Dipakai login member">
+          <Input value={username} onChange={(e) => { setUsername(e.target.value); setErr(""); }} placeholder="cth. sari.w" />
+        </Field>
+        <Field label="Nomor HP" hint="Hubungi kasir bila ingin mengubah nomor"><Input value={me.phone} disabled /></Field>
         <Field label="Email"><Input value={email} type="email" onChange={(e) => setEmail(e.target.value)} placeholder="nama@mail.com" /></Field>
         <Field label="Tanggal lahir" hint={`Bonus ${s.memberBirthdayPct}% di hari ulang tahun`}>
           <Input value={birthDate} type="date" onChange={(e) => setBirthDate(e.target.value)} />

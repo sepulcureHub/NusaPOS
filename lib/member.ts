@@ -60,12 +60,36 @@ export function normalizePhone(v: string) {
   return (v || "").replace(/[^\d+]/g, "").replace(/^\+?62/, "0");
 }
 
+export function normalizeUsername(v: string) {
+  return (v || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
+}
+
 export function makeMemberNo(existing: Customer[]) {
   const used = new Set(existing.map((c) => c.memberNo).filter(Boolean) as string[]);
   let n = existing.filter((c) => c.member && c.memberNo).length + 1;
   let no = `NUSA-${String(n).padStart(4, "0")}`;
   while (used.has(no)) { n++; no = `NUSA-${String(n).padStart(4, "0")}`; }
   return no;
+}
+
+export function makeMemberUsername(source: string, fallback: string, existing: Customer[], selfId?: string) {
+  const base = normalizeUsername(source) || normalizeUsername(fallback) || "member";
+  const root = base.length >= 3 ? base : `member${base.replace(/[^a-z0-9]/g, "") || "01"}`;
+  const used = new Set(
+    existing
+      .filter((c) => c.member && c.id !== selfId)
+      .map((c) => normalizeUsername(c.username ?? ""))
+      .filter(Boolean)
+  );
+
+  let candidate = root.slice(0, 20);
+  let n = 1;
+  while (used.has(candidate)) {
+    n++;
+    const suffix = `-${n}`;
+    candidate = `${root.slice(0, Math.max(1, 20 - suffix.length))}${suffix}`;
+  }
+  return candidate;
 }
 
 export function makePin() {
@@ -94,20 +118,30 @@ export function memberDiscountPct(c: Customer | null, s: Settings) {
 }
 
 export function validateMember(
-  draft: { name: string; phone: string; email: string; birthDate: string },
-  all: Customer[], selfId?: string
+  draft: { name: string; phone: string; email: string; birthDate: string; username?: string },
+  all: Customer[],
+  selfId?: string
 ) {
   const e: Record<string, string> = {};
   if (draft.name.trim().length < 3) e.name = "Nama minimal 3 karakter";
+
   const phone = normalizePhone(draft.phone);
   if (phone.length < 8 || phone.length > 16) e.phone = "Nomor HP 8–16 digit";
   else if (all.some((c) => c.id !== selfId && c.phone !== "-" && normalizePhone(c.phone) === phone)) e.phone = "Nomor sudah terdaftar";
+
+  const username = normalizeUsername(draft.username ?? "");
+  if (username.length < 3) e.username = "Username minimal 3 karakter";
+  else if (!/^[a-z0-9._-]{3,20}$/.test(username)) e.username = "Username 3–20 karakter: huruf, angka, titik, - atau _";
+  else if (all.some((c) => c.id !== selfId && c.member && normalizeUsername(c.username ?? "") === username)) e.username = "Username sudah dipakai member lain";
+
   if (draft.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(draft.email.trim())) e.email = "Format email tidak valid";
+
   if (draft.birthDate) {
     const d = new Date(draft.birthDate);
     if (Number.isNaN(d.getTime())) e.birthDate = "Tanggal tidak valid";
     else if (d.getTime() > Date.now()) e.birthDate = "Tanggal lahir tidak boleh di masa depan";
   }
+
   return e;
 }
 
@@ -126,11 +160,20 @@ export function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "MB";
 }
 
-export interface BenefitItem {
-  key: string; icon: "percent" | "star" | "heart" | "calendar" | "gift" | "shield";
-  title: string; value: string; desc: string; color: string;
+export function memberDisplayName(c: Customer) {
+  return c.username ? `@${c.username}` : c.memberNo ?? c.phone;
 }
 
+export interface BenefitItem {
+  key: string;
+  icon: "percent" | "star" | "heart" | "calendar" | "gift" | "shield";
+  title: string;
+  value: string;
+  desc: string;
+  color: string;
+}
+
+/** Daftar benefit nyata yang dibaca dari pengaturan admin. */
 export function benefitItems(s: Settings): BenefitItem[] {
   const t = tierThresholds(s);
   return [
@@ -166,9 +209,9 @@ export function benefitItems(s: Settings): BenefitItem[] {
     },
     {
       key: "history", icon: "heart", color: "var(--chili)",
-      title: "Portal member pribadi",
-      value: "Login mandiri",
-      desc: "Cek poin, tier, riwayat belanja, dan tukar hadiah lewat halaman member khusus.",
+      title: "Portal member mandiri",
+      value: "Username + PIN",
+      desc: "Login pakai username dan PIN yang dibuatkan kasir untuk cek poin, tier, riwayat, dan tukar hadiah.",
     },
   ];
 }

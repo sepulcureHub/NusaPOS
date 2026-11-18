@@ -3,19 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useStore, verifyMemberPin } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { useToast } from "./Toasts";
 import { sfx, setSoundEnabled } from "@/lib/sound";
 import { hashPassword, homeFor, roleLabel, verifyPassword } from "@/lib/auth";
-import { DEFAULT_DEMO_PASSWORDS, DEMO_MEMBER_PIN, STORE_CLOSE, STORE_OPEN } from "@/lib/demo-data";
+import { DEFAULT_DEMO_PASSWORDS, STORE_CLOSE, STORE_OPEN } from "@/lib/demo-data";
 import { applyTheme, resolveTheme } from "@/lib/brand";
 import { dateFull } from "@/lib/format";
 import type { User } from "@/lib/types";
 import { AuthField } from "./AuthField";
+import { MemberLoginForm } from "./MemberAuth";
 import { Badge, Button, IconBtn } from "./ui";
 import { BrandLockup } from "./Brand";
 import {
-  IAlert, IArrowRight, ICheckCircle, IClock, IHeart, IInfo, ILock, IMoon, IPhone, IRegister,
+  IAlert, IArrowRight, ICheckCircle, IHeart, ILock, IMoon, IRegister,
   IShield, IStore, ISun, IUser, IUsers, IVolume, IVolumeX,
 } from "./icons";
 
@@ -36,12 +37,6 @@ export function LoginScreen() {
   const [filling, setFilling] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [hint, setHint] = useState("");
-
-  /* member */
-  const [mPhone, setMPhone] = useState("");
-  const [mPin, setMPin] = useState("");
-  const [mErr, setMErr] = useState("");
-  const [mBusy, setMBusy] = useState(false);
 
   const [now, setNow] = useState<number | null>(null);
   const userRef = useRef<HTMLInputElement>(null);
@@ -73,7 +68,6 @@ export function LoginScreen() {
   const adminCount = accounts.filter((u) => u.role === "admin").length;
   const kasirCount = accounts.filter((u) => u.role === "kasir").length;
   const memberCount = state.customers.filter((c) => c.member).length;
-  const demoMember = state.customers.find((c) => c.member && c.pinHash);
 
   const demoPasswordOf = (u: User) =>
     DEFAULT_DEMO_PASSWORDS.find((p) => hashPassword(p) === u.passHash) ?? null;
@@ -138,17 +132,6 @@ export function LoginScreen() {
     });
   };
 
-  const autoFillMember = () => {
-    if (!demoMember) return;
-    clearTimers();
-    setMErr("");
-    setMPhone("");
-    setMPin("");
-    typeField(setMPhone, demoMember.phone, "mphone", 90, () => {
-      typeField(setMPin, DEMO_MEMBER_PIN, "mpin", 60, () => sfx.add());
-    });
-  };
-
   const submitStaff = () => {
     if (busy || filling) return;
     const uname = username.trim().toLowerCase();
@@ -183,37 +166,6 @@ export function LoginScreen() {
         push({ msg: `Selamat datang, ${u.name} — ${roleLabel(u.role)}`, type: "ok" });
         setBusy(false);
         router.replace(homeFor(u.role));
-      }, 420)
-    );
-  };
-
-  const submitMember = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (mBusy || filling) return;
-    if (!mPhone.trim() || !mPin.trim()) {
-      setMErr("Nomor HP dan PIN wajib diisi.");
-      sfx.error();
-      return;
-    }
-
-    setMBusy(true);
-    setMErr("");
-
-    timers.current.push(
-      setTimeout(() => {
-        const c = verifyMemberPin(state, mPhone, mPin);
-        if (!c) {
-          setMBusy(false);
-          setMErr("Nomor HP atau PIN salah, atau member belum diaktifkan.");
-          sfx.error();
-          return;
-        }
-
-        dispatch({ type: "MEMBER_LOGIN", customerId: c.id });
-        sfx.success();
-        push({ msg: `Halo, ${c.name} — selamat datang di portal member`, type: "ok" });
-        setMBusy(false);
-        router.replace("/memberku");
       }, 420)
     );
   };
@@ -288,7 +240,7 @@ export function LoginScreen() {
                 <IHeart size={16} />
               </span>
               <p className="text-sm font-bold mt-2.5">Member · {memberCount}</p>
-              <p className="text-[11px] text-mute mt-1 leading-snug">Cek poin, tier, riwayat, dan tukar hadiah.</p>
+              <p className="text-[11px] text-mute mt-1 leading-snug">Login username + PIN, cek poin, tier, dan hadiah.</p>
             </div>
           </div>
 
@@ -431,77 +383,19 @@ export function LoginScreen() {
                   </div>
                 </form>
               ) : (
-                <form onSubmit={submitMember} className="space-y-4">
+                <div className="space-y-4">
                   <div className="flex items-center gap-2.5">
                     <span className="w-10 h-10 rounded-xl grid place-items-center" style={{ color: "var(--violet)", background: "color-mix(in srgb, var(--violet) 14%, transparent)" }}>
                       <IHeart size={19} />
                     </span>
                     <div>
                       <h2 className="font-display font-bold text-lg leading-none">Masuk portal member</h2>
-                      <p className="text-[11px] text-faint mt-1">Gunakan nomor HP & PIN yang dibuatkan kasir</p>
+                      <p className="text-[11px] text-faint mt-1">Gunakan username & PIN yang dibuatkan kasir</p>
                     </div>
                   </div>
 
-                  <AuthField
-                    label="Nomor HP"
-                    value={mPhone}
-                    onChange={(v) => { setMPhone(v); setMErr(""); }}
-                    icon={<IPhone size={17} />}
-                    placeholder="cth. 081333334444"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    filling={filling === "mphone"}
-                  />
-                  <AuthField
-                    label="PIN member"
-                    type="password"
-                    value={mPin}
-                    onChange={(v) => { setMPin(v); setMErr(""); }}
-                    icon={<ILock size={17} />}
-                    placeholder="••••••"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    filling={filling === "mpin"}
-                    error={mErr}
-                    onEnter={submitMember}
-                  />
-
-                  <Button
-                    type="submit"
-                    className="w-full py-3.5"
-                    disabled={mBusy || !!filling}
-                    style={{ background: "linear-gradient(135deg, var(--violet), color-mix(in srgb, var(--violet) 65%, #000))" }}
-                  >
-                    {mBusy ? "Memverifikasi…" : filling ? "Mengisi…" : <>Masuk portal member <IArrowRight size={16} /></>}
-                  </Button>
-
-                  <div className="pt-4 border-t border-line">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-faint flex items-center gap-1.5">
-                      <IHeart size={12} /> Akun member terdaftar
-                    </p>
-                    {demoMember ? (
-                      <button
-                        type="button"
-                        onClick={autoFillMember}
-                        className="w-full mt-2.5 rounded-2xl border px-3 py-3 text-left transition-all duration-300 active:scale-[.98]"
-                        style={{
-                          borderColor: "color-mix(in srgb, var(--violet) 34%, transparent)",
-                          background: "color-mix(in srgb, var(--violet) 8%, var(--surface))",
-                        }}
-                      >
-                        <span className="block text-xs font-bold truncate">{demoMember.name}</span>
-                        <span className="block text-[10px] text-faint font-mono mt-0.5">
-                          {demoMember.phone} · PIN demo {DEMO_MEMBER_PIN}
-                        </span>
-                      </button>
-                    ) : (
-                      <p className="text-[11px] text-faint mt-3">Belum ada member terdaftar. Daftar dulu ke kasir.</p>
-                    )}
-                    <p className="text-[10px] text-faint mt-3 leading-snug flex gap-1.5">
-                      <IInfo size={12} className="shrink-0 mt-0.5" /> Belum jadi member? Datang ke kasir, daftar gratis, lalu kasir akan membuatkan PIN.
-                    </p>
-                  </div>
-                </form>
+                  <MemberLoginForm embedded redirect="/memberku" />
+                </div>
               )}
             </div>
           )}

@@ -61,6 +61,7 @@ export const DEMO_CUSTOMERS: Customer[] = [
   { id: "c1", name: "Budi Santoso", phone: "081211112222", member: false },
   {
     id: "c2", name: "Siti Rahma", phone: "081333334444", member: true, memberNo: "NUSA-0001",
+    username: "siti",
     email: "siti.rahma@mail.com", birthDate: "1996-04-18", joinedAt: now - 320 * DAY_MS,
     points: 240, visits: 64, spend: 2260000, memberActive: true,
     notes: "Suka matcha, minta less sugar.", portal: true, pinHash,
@@ -69,6 +70,7 @@ export const DEMO_CUSTOMERS: Customer[] = [
   { id: "c3", name: "Agus Wijaya", phone: "082155556666", member: false },
   {
     id: "c4", name: "Dewi Lestari", phone: "082277778888", member: true, memberNo: "NUSA-0002",
+    username: "dewi",
     email: "dewi.lestari@mail.com", birthDate: "1993-11-02", joinedAt: now - 210 * DAY_MS,
     points: 620, visits: 128, spend: 5140000, memberActive: true,
     notes: "Pelanggan korporat, sering pesan 10 gelas.", portal: true, pinHash,
@@ -77,6 +79,7 @@ export const DEMO_CUSTOMERS: Customer[] = [
   { id: "c5", name: "Rizky Pratama", phone: "085699990000", member: false },
   {
     id: "c6", name: "Maya Putri", phone: "085712123434", member: true, memberNo: "NUSA-0003",
+    username: "maya",
     email: "maya.putri@mail.com", birthDate: "2000-07-25", joinedAt: now - 96 * DAY_MS,
     points: 180, visits: 27, spend: 940000, memberActive: true,
     notes: "Datang tiap Kamis untuk croissant.", portal: true, pinHash,
@@ -85,6 +88,7 @@ export const DEMO_CUSTOMERS: Customer[] = [
   { id: "c7", name: "Joko Susilo", phone: "081856567878", member: false },
   {
     id: "c8", name: "Nina Kartika", phone: "081990901212", member: true, memberNo: "NUSA-0004",
+    username: "nina",
     email: "", birthDate: "1998-01-09", joinedAt: now - 41 * DAY_MS,
     points: 60, visits: 9, spend: 310000, memberActive: true, notes: "",
     portal: true, pinHash,
@@ -155,17 +159,17 @@ export const DEMO_LANDING = {
     { icon: "bean", title: "Disangrai mingguan", desc: "Biji kopi tidak pernah lebih tua dari 14 hari saat masuk cangkir kamu." },
     { icon: "clock", title: "Dapur buka 07.00", desc: "Sarapan hangat sejak pagi, dapur terakhir menerima pesanan 21.45." },
     { icon: "tag", title: "Promo ganti tiap hari", desc: "Senin teh melati, Kamis croissant, Jumat donat. Selalu ada yang murah." },
-    { icon: "heart", title: "Member naik tier dari belanja", desc: "Daftar gratis, belanja terus, tier naik otomatis dan poin bisa ditukar hadiah." },
+    { icon: "heart", title: "Member naik tier dari belanja", desc: "Daftar gratis, dapat username & PIN, belanja terus, tier naik otomatis dan poin bisa ditukar hadiah." },
   ],
   story: "Berawal dari gerobak di depan gang Malioboro tahun 2019, kami belajar satu hal: orang tidak hanya membeli kopi, mereka membeli tempat untuk pulang sebentar.",
   testimonials: [
     { name: "Maya Putri", role: "Member Bronze", rating: 5, quote: "Kopi susu arennya tidak kemanisan. Poinnya cepat kumpul, kemarin sudah bisa tukar croissant gratis." },
-    { name: "Agus Wijaya", role: "Warga Jogja", rating: 5, quote: "Nasi goreng kampungnya persis buatan ibu saya. Selasa diskon lagi." },
+    { name: "Agus Wijaya", role: "Pelanggan umum", rating: 5, quote: "Nasi goreng kampungnya persis buatan ibu saya. Selasa diskon lagi." },
     { name: "Nina Kartika", role: "Member Bronze", rating: 4, quote: "Brownies lava cuma ada akhir pekan, jadi tiap Sabtu saya mampir." },
     { name: "Dewi Lestari", role: "Member Gold", rating: 5, quote: "Sudah Gold dari akumulasi belanja kantor. Potongan tier-nya terasa banget, plus poin bisa ditukar voucher." },
   ],
   faq: [
-    { q: "Bagaimana cara jadi member?", a: "Minta kasir mendaftarkan nomor HP kamu. Kamu akan dapat nomor member dan PIN untuk masuk ke halaman member." },
+    { q: "Bagaimana cara jadi member?", a: "Minta kasir mendaftarkan nama, nomor HP, username, dan PIN. Setelah itu kamu bisa login ke portal member." },
     { q: "Bagaimana cara naik tier?", a: "Tier naik otomatis dari total akumulasi belanjamu. Semakin sering belanja, semakin cepat naik — tanpa syarat lain." },
     { q: "Poin dipakai untuk apa?", a: "Poin bisa ditukar dengan hadiah di katalog penukaran: minuman gratis, diskon, sampai merchandise." },
     { q: "Metode pembayaran apa saja?", a: "Tunai, QRIS semua bank & e-wallet, serta kartu debit/kredit. Tanpa biaya tambahan." },
@@ -195,7 +199,7 @@ export const DEMO_SETTINGS: Settings = {
   memberBonusSilver: 1,
   memberBonusGold: 3,
   memberBonusPlatinum: 5,
-  memberBenefitNotes: "Sebutkan nomor HP yang terdaftar saat memesan. Tier naik otomatis dari akumulasi belanja, dan poin bisa ditukar di katalog hadiah.",
+  memberBenefitNotes: "Sebutkan username member saat bertanya ke kasir. Tier naik otomatis dari akumulasi belanja, dan poin bisa ditukar di katalog hadiah.",
 };
 
 export const DEMO_DEFAULT_DAYS = ALL_DAYS;

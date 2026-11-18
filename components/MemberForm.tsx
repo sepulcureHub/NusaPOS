@@ -7,9 +7,12 @@ import { useToast } from "./Toasts";
 import { sfx } from "@/lib/sound";
 import { dateShort, num, uid } from "@/lib/format";
 import { hashPassword } from "@/lib/auth";
-import { TIER_COLOR, initials, makeMemberNo, normalizePhone, tierOf, totalTierPct, validateMember } from "@/lib/member";
+import {
+  TIER_COLOR, initials, makeMemberNo, makeMemberUsername, normalizePhone, normalizeUsername,
+  tierOf, totalTierPct, validateMember,
+} from "@/lib/member";
 import { Badge, Button, Field, Input, Modal, Textarea, Toggle } from "./ui";
-import { ICheckCircle, IHeart, IIdCard, IInfo, IKey, IPhone, IStar } from "./icons";
+import { ICheckCircle, IHeart, IIdCard, IInfo, IKey, IPhone, IStar, IUser } from "./icons";
 
 export function MemberForm({ open, edit, onClose, onSaved }: {
   open: boolean; edit: Customer | null; onClose: () => void; onSaved?: (c: Customer) => void;
@@ -21,6 +24,8 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [username, setUsername] = useState("");
+  const [usernameTouched, setUsernameTouched] = useState(false);
   const [email, setEmail] = useState("");
   const [birthDate, setBirthDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -34,6 +39,8 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
     if (!open) return;
     setName(edit?.name ?? "");
     setPhone(edit?.phone === "-" ? "" : edit?.phone ?? "");
+    setUsername(edit?.username ?? "");
+    setUsernameTouched(!!edit);
     setEmail(edit?.email ?? "");
     setBirthDate(edit?.birthDate ?? "");
     setNotes(edit?.notes ?? "");
@@ -43,13 +50,18 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
     setErrors({});
   }, [open, edit]);
 
+  useEffect(() => {
+    if (!open || edit || usernameTouched) return;
+    const sug = makeMemberUsername(name, phone, state.customers);
+    setUsername(sug);
+  }, [open, edit, usernameTouched, name, phone, state.customers]);
+
   const previewNo = useMemo(() => edit?.memberNo ?? makeMemberNo(state.customers), [edit, state.customers]);
   const tier = tierOf(edit?.spend ?? 0, s);
 
   const save = () => {
-    const e = validateMember({ name, phone, email, birthDate }, state.customers, edit?.id);
+    const e = validateMember({ name, phone, email, birthDate, username }, state.customers, edit?.id);
 
-    // PIN dibuat / diketik oleh kasir
     if (!edit) {
       if (!/^\d{4,8}$/.test(pin)) e.pin = "PIN wajib 4–8 digit angka";
       else if (pin !== pin2) e.pin2 = "Ulangan PIN tidak sama";
@@ -61,39 +73,36 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
     setErrors(e);
     if (Object.keys(e).length) { sfx.error(); return; }
 
+    const uname = normalizeUsername(username);
     const pinHash = pin ? hashPassword(pin) : edit?.pinHash;
 
-    const base: Customer = edit ?? {
-      id: uid(), name: "", phone: "", member: true,
-      memberNo: previewNo,
-      points: Math.max(0, Math.round(s.memberWelcomePoints)),
-      visits: 0, spend: 0, joinedAt: Date.now(),
-      createdBy: user?.id, createdByName: user?.name,
-    };
-
     const next: Customer = {
-      ...base,
+      id: edit?.id ?? uid(),
       name: name.trim(),
       phone: normalizePhone(phone),
       member: true,
-      memberNo: base.memberNo ?? previewNo,
+      memberNo: edit?.memberNo ?? previewNo,
+      username: uname,
       email: email.trim(),
       birthDate,
       notes: notes.trim(),
       memberActive: active,
-      portal: portal,
+      portal,
       pinHash,
-      joinedAt: base.joinedAt ?? Date.now(),
-      points: base.points ?? 0, visits: base.visits ?? 0, spend: base.spend ?? 0,
-      createdBy: base.createdBy ?? user?.id, createdByName: base.createdByName ?? user?.name,
+      joinedAt: edit?.joinedAt ?? Date.now(),
+      points: edit?.points ?? Math.max(0, Math.round(s.memberWelcomePoints)),
+      visits: edit?.visits ?? 0,
+      spend: edit?.spend ?? 0,
+      createdBy: edit?.createdBy ?? user?.id,
+      createdByName: edit?.createdByName ?? user?.name,
     };
 
     dispatch({ type: edit ? "UPDATE_CUSTOMER" : "ADD_CUSTOMER", customer: next });
     sfx.success();
     push({
       msg: edit
-        ? `Member ${next.name} diperbarui${pin ? " · PIN diganti" : ""}`
-        : `Member baru ${next.name} · ${next.memberNo} · PIN dibuat oleh kasir`,
+        ? `Member ${next.name} diperbarui · @${next.username}${pin ? " · PIN diganti" : ""}`
+        : `Member baru ${next.name} · @${next.username} · PIN dibuat oleh kasir`,
       type: "ok",
     });
     onSaved?.(next);
@@ -110,7 +119,7 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
       }
       footer={
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-faint hidden sm:flex items-center gap-1.5"><IInfo size={12} /> PIN diketik kasir · benefit diatur admin</span>
+          <span className="text-[11px] text-faint hidden sm:flex items-center gap-1.5"><IInfo size={12} /> Username & PIN dibuat kasir · benefit diatur admin</span>
           <div className="flex gap-2 ml-auto">
             <Button variant="ghost" onClick={onClose}>Batal</Button>
             <Button onClick={save}><IHeart size={15} /> {edit ? "Simpan member" : "Daftarkan member"}</Button>
@@ -126,7 +135,7 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
             <p className="text-[11px] text-mute mt-0.5">
               {edit
                 ? `Bergabung ${dateShort(edit.joinedAt ?? Date.now())} · belanja ${rupiah(edit.spend ?? 0)} · ${num(edit.points ?? 0)} poin`
-                : `Langsung dapat ${num(s.memberWelcomePoints)} poin sambutan + PIN untuk login portal`}
+                : `Langsung dapat ${num(s.memberWelcomePoints)} poin sambutan + username & PIN untuk login portal`}
             </p>
           </div>
           <div className="ml-auto flex flex-col items-end gap-1.5">
@@ -139,21 +148,32 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
           <Field label="Nama lengkap *" error={errors.name}>
             <Input value={name} autoFocus placeholder="cth. Sari Wulandari" onChange={(e) => { setName(e.target.value); setErrors((p) => ({ ...p, name: "" })); }} />
           </Field>
-          <Field label="Nomor HP *" error={errors.phone} hint="Dipakai untuk login portal member">
+          <Field label="Nomor HP *" error={errors.phone} hint="Kontak member, bukan lagi login utama">
             <Input value={phone} inputMode="tel" placeholder="0812xxxxxxx" onChange={(e) => { setPhone(e.target.value); setErrors((p) => ({ ...p, phone: "" })); }} />
           </Field>
         </div>
 
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Field label="Email" error={errors.email} hint="Opsional">
-            <Input value={email} type="email" placeholder="nama@mail.com" onChange={(e) => { setEmail(e.target.value); setErrors((p) => ({ ...p, email: "" })); }} />
-          </Field>
-          <Field label="Tanggal lahir" error={errors.birthDate} hint={`Bonus ulang tahun +${s.memberBirthdayPct}%`}>
-            <Input value={birthDate} type="date" onChange={(e) => { setBirthDate(e.target.value); setErrors((p) => ({ ...p, birthDate: "" })); }} />
-          </Field>
-        </div>
+        <Field label="Username portal *" error={errors.username} hint="3–20 karakter: huruf kecil, angka, titik, - atau _">
+          <div className="flex gap-2">
+            <Input value={username} onChange={(e) => { setUsername(e.target.value); setUsernameTouched(true); setErrors((p) => ({ ...p, username: "" })); }} placeholder="cth. sari.w" />
+            {!edit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0"
+                onClick={() => {
+                  setUsername(makeMemberUsername(name, phone, state.customers));
+                  setUsernameTouched(true);
+                  setErrors((p) => ({ ...p, username: "" }));
+                  sfx.tap();
+                }}
+              >
+                <IUser size={14} /> Sarankan
+              </Button>
+            )}
+          </div>
+        </Field>
 
-        {/* PIN — diketik kasir */}
         <div className="rounded-2xl border p-4 space-y-3"
           style={{ borderColor: "color-mix(in srgb, var(--laut) 34%, transparent)", background: "color-mix(in srgb, var(--laut) 7%, transparent)" }}>
           <p className="text-xs font-bold flex items-center gap-1.5"><IKey size={14} className="text-laut" /> {edit ? "Ganti PIN (opsional)" : "Buat PIN akses portal"}</p>
@@ -169,8 +189,17 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
           </div>
           <p className="text-[11px] text-mute flex gap-1.5">
             <IIdCard size={13} className="shrink-0 mt-0.5 text-laut" />
-            {edit ? "Isi hanya jika member minta ganti PIN. Kosongkan untuk memakai PIN lama." : "Beritahu PIN ini ke member — dipakai login di Portal Member dengan nomor HP di atas."}
+            {edit ? "Isi hanya jika member minta ganti PIN. Kosongkan untuk memakai PIN lama." : "Beritahu username & PIN ini ke member — dipakai login di Portal Member."}
           </p>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Field label="Email" error={errors.email} hint="Opsional">
+            <Input value={email} type="email" placeholder="nama@mail.com" onChange={(e) => { setEmail(e.target.value); setErrors((p) => ({ ...p, email: "" })); }} />
+          </Field>
+          <Field label="Tanggal lahir" error={errors.birthDate} hint={`Bonus ulang tahun +${s.memberBirthdayPct}%`}>
+            <Input value={birthDate} type="date" onChange={(e) => { setBirthDate(e.target.value); setErrors((p) => ({ ...p, birthDate: "" })); }} />
+          </Field>
         </div>
 
         <Field label="Catatan preferensi" hint="Contoh: less sugar, alergi kacang, biasa pesan rombongan">
@@ -192,7 +221,7 @@ export function MemberForm({ open, edit, onClose, onSaved }: {
           <p className="font-bold text-ink text-xs flex items-center gap-1.5"><ICheckCircle size={13} className="text-pandan" /> Benefit yang langsung berlaku</p>
           <p className="flex items-center gap-1.5"><IStar size={12} className="text-amber" /> Potongan dasar {s.memberDiscountPct}% + bonus tier dari akumulasi belanja</p>
           <p className="flex items-center gap-1.5"><IHeart size={12} className="text-chili" /> 1 poin tiap {rupiah(Math.max(100, s.memberPointRate))} belanja · bisa ditukar hadiah</p>
-          <p className="flex items-center gap-1.5"><IPhone size={12} className="text-laut" /> Login portal: nomor HP + PIN yang kamu buat di atas</p>
+          <p className="flex items-center gap-1.5"><IPhone size={12} className="text-laut" /> Login portal: username + PIN yang kamu buat di atas</p>
           <p className="text-faint">{isAdmin ? "Sebagai administrator kamu juga bisa mengubah angka benefit di Pengaturan → Program Member." : "Angka benefit ditetapkan administrator."}</p>
         </div>
       </div>

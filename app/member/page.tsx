@@ -1,33 +1,83 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useAuth, useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
 import type { Customer, MemberTier, PointReward } from "@/lib/types";
 import { CATEGORIES, CATEGORY_COLORS } from "@/lib/types";
-import { dateShort, download, num, rupiah, timeID, toCSV, uid } from "@/lib/format";
+import { DEMO_SETTINGS } from "@/lib/demo-data";
+import { clamp, dateShort, download, num, rupiah, timeID, toCSV, uid } from "@/lib/format";
 import {
-  TIER_COLOR, initials, isBirthday, memberDiscountPct, memberStats, nextTier, tierOf, tierProgress, totalTierPct,
+  TIERS,
+  TIER_COLOR,
+  initials,
+  isBirthday,
+  memberDiscountPct,
+  memberStats,
+  nextTier,
+  tierBonus,
+  tierOf,
+  tierProgress,
+  tierThresholds,
+  totalTierPct,
 } from "@/lib/member";
 import {
-  activeDiscount, discountLabel, effectivePrice, hasDiscount, isAvailableToday, isLimited, stockOf, todayPromo,
+  activeDiscount,
+  discountLabel,
+  effectivePrice,
+  hasDiscount,
+  isAvailableToday,
+  isLimited,
+  stockOf,
+  todayPromo,
 } from "@/lib/pricing";
 import { ProductThumb } from "@/components/ProductThumb";
 import { SearchField } from "@/components/SearchField";
 import { MemberForm } from "@/components/MemberForm";
-import { MemberBenefitsModal } from "@/components/MemberBenefits";
+import { MemberBenefitsPanel } from "@/components/MemberBenefits";
 import {
-  Badge, Button, Confirm, Drawer, EmptyState, Field, IconBtn, Input, Modal, PageSkel, Segmented, Select, Textarea, Toggle,
+  Badge,
+  Button,
+  Confirm,
+  Drawer,
+  EmptyState,
+  Field,
+  IconBtn,
+  Input,
+  Modal,
+  PageSkel,
+  Segmented,
+  Select,
+  Textarea,
+  Toggle,
 } from "@/components/ui";
 import {
-  IBox, ICalendar, ICheckCircle, IDownload, IHeart, IInfo, IPen, IPercent,
-  IPhone, IPlus, IReceipt, IShield, IStar, ITag, ITrash, ITrendUp, IUserPlus,
+  IBox,
+  ICalendar,
+  ICheckCircle,
+  IDownload,
+  IGift,
+  IHeart,
+  IInfo,
+  IPen,
+  IPercent,
+  IPhone,
+  IPlus,
+  IReceipt,
+  IShield,
+  IStar,
+  ITag,
+  ITrash,
+  ITrendUp,
+  IUserPlus,
 } from "@/components/icons";
-import { IGift } from "@/components/icons";
 import { IHistory } from "@/components/icons-extra";
 
-type PageTab = "member" | "produk" | "hadiah" | "penukaran";
+type PageTab = "benefit" | "member" | "produk" | "hadiah" | "penukaran";
+
+const VALID_TABS: PageTab[] = ["benefit", "member", "produk", "hadiah", "penukaran"];
 
 const SORTS = [
   { v: "points", l: "Poin terbanyak" },
@@ -46,14 +96,382 @@ export default function MemberPage() {
 }
 
 function Members() {
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const { can, isAdmin } = useAuth();
+  const sp = useSearchParams();
+
+  const [tab, setTab] = useState<PageTab>(() => {
+    const q = sp.get("tab") as PageTab | null;
+    return q && VALID_TABS.includes(q) ? q : "member";
+  });
+
+  useEffect(() => {
+    const q = sp.get("tab") as PageTab | null;
+    if (q && VALID_TABS.includes(q)) setTab(q);
+  }, [sp]);
+
+  if (!state.hydrated) return <PageSkel />;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3 rise">
+        <div>
+          <h1 className="font-display font-bold text-2xl flex items-center gap-2">
+            Member & Benefit
+            <Badge color="var(--violet)">
+              <IHeart size={10} /> {state.customers.filter((c) => c.member).length} member
+            </Badge>
+          </h1>
+          <p className="text-sm text-mute mt-0.5">
+            Benefit member, data member, produk tersedia, katalog hadiah, dan riwayat penukaran.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <Badge color="var(--accent)">
+              <IShield size={10} /> Admin bisa atur benefit
+            </Badge>
+          )}
+          {!isAdmin && (
+            <Badge color="var(--amber)">
+              <IInfo size={10} /> Benefit baca-saja
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      <Segmented
+        value={tab}
+        onChange={(v) => {
+          setTab(v as PageTab);
+          sfx.tap();
+        }}
+        className="w-fit"
+        options={[
+          { v: "benefit", l: <><IHeart size={13} /> Benefit Member</> },
+          { v: "member", l: <><IUserPlus size={13} /> Member</> },
+          { v: "produk", l: <><IBox size={13} /> Produk Tersedia</> },
+          { v: "hadiah", l: <><IGift size={13} /> Katalog Hadiah</> },
+          { v: "penukaran", l: <><IHistory size={13} /> Penukaran</> },
+        ]}
+      />
+
+      {tab === "benefit" && <BenefitTab />}
+      {tab === "member" && <MemberTab canManage={can("members.manage")} canDelete={can("members.delete")} isAdmin={isAdmin} />}
+      {tab === "produk" && <ProductCatalog />}
+      {tab === "hadiah" && <RewardCatalog isAdmin={isAdmin} />}
+      {tab === "penukaran" && <RedemptionHistory />}
+    </div>
+  );
+}
+
+function BenefitTab() {
+  const { state, dispatch } = useStore();
+  const { isAdmin } = useAuth();
+  const { push } = useToast();
+  const s = state.settings;
+  const [preview, setPreview] = useState(false);
+
+  const set = (patch: Partial<typeof s>) => dispatch({ type: "UPDATE_SETTINGS", patch });
+
+  const thresholds = tierThresholds(s);
+
+  const resetBenefit = () => {
+    set({
+      memberEnabled: DEMO_SETTINGS.memberEnabled,
+      memberPointRate: DEMO_SETTINGS.memberPointRate,
+      memberDiscountPct: DEMO_SETTINGS.memberDiscountPct,
+      memberBirthdayPct: DEMO_SETTINGS.memberBirthdayPct,
+      memberWelcomePoints: DEMO_SETTINGS.memberWelcomePoints,
+      memberTierSilver: DEMO_SETTINGS.memberTierSilver,
+      memberTierGold: DEMO_SETTINGS.memberTierGold,
+      memberTierPlatinum: DEMO_SETTINGS.memberTierPlatinum,
+      memberBonusSilver: DEMO_SETTINGS.memberBonusSilver,
+      memberBonusGold: DEMO_SETTINGS.memberBonusGold,
+      memberBonusPlatinum: DEMO_SETTINGS.memberBonusPlatinum,
+      memberBenefitNotes: DEMO_SETTINGS.memberBenefitNotes,
+    });
+    sfx.tap();
+    push({ msg: "Benefit member dikembalikan ke bawaan", type: "ok" });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-5 rise">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <IHeart size={18} style={{ color: "var(--violet)" }} />
+          <h2 className="font-display font-bold text-lg">Benefit Member</h2>
+          <Badge color={s.memberEnabled ? "var(--pandan)" : "var(--chili)"}>
+            {s.memberEnabled ? "Aktif" : "Nonaktif"}
+          </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPreview(true)}>
+              <IInfo size={14} /> Pratinjau
+            </Button>
+            {isAdmin && (
+              <Toggle
+                checked={s.memberEnabled}
+                label="Program member"
+                onChange={(v) => {
+                  set({ memberEnabled: v });
+                  sfx.tap();
+                }}
+              />
+            )}
+          </div>
+        </div>
+
+        {!isAdmin && (
+          <div
+            className="rounded-xl border p-3 text-[11.5px] mb-4 flex gap-2"
+            style={{
+              borderColor: "color-mix(in srgb, var(--amber) 32%, transparent)",
+              background: "color-mix(in srgb, var(--amber) 8%, transparent)",
+            }}
+          >
+            <IInfo size={14} className="text-amber shrink-0 mt-0.5" />
+            <span className="text-mute">
+              Kamu masuk sebagai kasir. Benefit member hanya bisa dibaca. Administrator dapat mengatur angka benefit di tab ini.
+            </span>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div className="space-y-5">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <BenefitNum
+                label="Rp per 1 poin"
+                hint="1000 = 1 poin / Rp 1.000"
+                value={s.memberPointRate}
+                min={100}
+                max={1000000}
+                step={100}
+                onChange={(n) => set({ memberPointRate: Math.max(100, n) })}
+              />
+              <BenefitNum
+                label="Potongan dasar (%)"
+                hint="Semua member aktif"
+                value={s.memberDiscountPct}
+                min={0}
+                max={25}
+                onChange={(n) => set({ memberDiscountPct: n })}
+              />
+              <BenefitNum
+                label="Bonus ulang tahun (%)"
+                hint="Tambahan di hari H"
+                value={s.memberBirthdayPct}
+                min={0}
+                max={25}
+                onChange={(n) => set({ memberBirthdayPct: n })}
+              />
+              <BenefitNum
+                label="Poin sambutan"
+                hint="Saat pertama mendaftar"
+                value={s.memberWelcomePoints}
+                min={0}
+                max={100000}
+                step={10}
+                onChange={(n) => set({ memberWelcomePoints: n })}
+              />
+            </div>
+
+            <div className="rounded-2xl border border-line bg-surface p-4 space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-bold flex items-center gap-1.5">
+                  <IStar size={13} className="text-amber" /> Ambang tier — total belanja kumulatif (Rp)
+                </p>
+                <span className="text-[10.5px] text-faint ml-auto">Tier naik otomatis saat member melewati ambang ini</span>
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-3">
+                <BenefitNum
+                  label="Belanja → Silver"
+                  hint={`Contoh: ${rupiah(thresholds.Silver)}`}
+                  value={s.memberTierSilver}
+                  min={1}
+                  max={100000000}
+                  step={50000}
+                  onChange={(n) => {
+                    const silver = clamp(n, 1, 100000000);
+                    const gold = Math.max(silver + 1, s.memberTierGold);
+                    const platinum = Math.max(gold + 1, s.memberTierPlatinum);
+                    set({ memberTierSilver: silver, memberTierGold: gold, memberTierPlatinum: platinum });
+                  }}
+                />
+                <BenefitNum
+                  label="Belanja → Gold"
+                  hint={`Di atas Silver (${rupiah(s.memberTierSilver)})`}
+                  value={s.memberTierGold}
+                  min={s.memberTierSilver + 1}
+                  max={100000000}
+                  step={50000}
+                  onChange={(n) => {
+                    const gold = Math.max(s.memberTierSilver + 1, clamp(n, s.memberTierSilver + 1, 100000000));
+                    const platinum = Math.max(gold + 1, s.memberTierPlatinum);
+                    set({ memberTierGold: gold, memberTierPlatinum: platinum });
+                  }}
+                />
+                <BenefitNum
+                  label="Belanja → Platinum"
+                  hint={`Di atas Gold (${rupiah(s.memberTierGold)})`}
+                  value={s.memberTierPlatinum}
+                  min={s.memberTierGold + 1}
+                  max={100000000}
+                  step={50000}
+                  onChange={(n) => set({ memberTierPlatinum: Math.max(s.memberTierGold + 1, clamp(n, s.memberTierGold + 1, 100000000)) })}
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-3">
+                <BenefitNum
+                  label="Bonus Silver (%)"
+                  hint="Di atas potongan dasar"
+                  value={s.memberBonusSilver}
+                  min={0}
+                  max={25}
+                  onChange={(n) => set({ memberBonusSilver: n })}
+                />
+                <BenefitNum
+                  label="Bonus Gold (%)"
+                  hint="Di atas potongan dasar"
+                  value={s.memberBonusGold}
+                  min={0}
+                  max={25}
+                  onChange={(n) => set({ memberBonusGold: n })}
+                />
+                <BenefitNum
+                  label="Bonus Platinum (%)"
+                  hint="Di atas potongan dasar"
+                  value={s.memberBonusPlatinum}
+                  min={0}
+                  max={25}
+                  onChange={(n) => set({ memberBonusPlatinum: n })}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-line bg-surface p-4">
+              <p className="text-xs font-bold mb-3 flex items-center gap-1.5">
+                <IShield size={13} className="text-accent" /> Penjelasan tier otomatis
+              </p>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {TIERS.map((tier) => {
+                  const bonus = tierBonus(tier, s);
+                  const total = totalTierPct(tier, s);
+                  const need = tierThresholds(s)[tier];
+                  return (
+                    <div
+                      key={tier}
+                      className="rounded-xl border p-3"
+                      style={{
+                        borderColor: `color-mix(in srgb, ${TIER_COLOR[tier]} 32%, transparent)`,
+                        background: `color-mix(in srgb, ${TIER_COLOR[tier]} 7%, transparent)`,
+                      }}
+                    >
+                      <Badge color={TIER_COLOR[tier]}>
+                        <IStar size={10} /> {tier}
+                      </Badge>
+                      <p className="font-display font-bold text-xl mt-2" style={{ color: TIER_COLOR[tier] }}>
+                        {total}%
+                      </p>
+                      <p className="text-[10px] text-faint">total potongan</p>
+                      <p className="text-[11px] text-mute mt-2 leading-snug">
+                        {tier === "Bronze"
+                          ? `Potongan dasar ${s.memberDiscountPct}%`
+                          : `Bonus ${bonus}% + dasar ${s.memberDiscountPct}%`}
+                      </p>
+                      <p className="text-[10px] text-faint mt-1">Ambang belanja {rupiah(need)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Field label="Catatan benefit untuk pelanggan" hint="Tampil di halaman pelanggan, portal member, dan pratinjau benefit">
+              <Textarea rows={2} value={s.memberBenefitNotes} onChange={(e) => set({ memberBenefitNotes: e.target.value })} />
+            </Field>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="ghost" size="sm" onClick={resetBenefit}>
+                <IRefreshLike /> Reset benefit
+              </Button>
+              <Button variant="soft" size="sm" onClick={() => setPreview(true)}>
+                <IHeart size={14} /> Lihat seperti pelanggan
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <MemberBenefitsPanel settings={s} dense={!isAdmin} showSteps={!isAdmin} />
+      </div>
+
+      <Modal
+        open={preview}
+        onClose={() => setPreview(false)}
+        wide
+        title="Benefit member — seperti dilihat pelanggan"
+        footer={
+          <div className="flex justify-end">
+            <Button onClick={() => setPreview(false)}>Tutup</Button>
+          </div>
+        }
+      >
+        <MemberBenefitsPanel settings={s} dense />
+      </Modal>
+    </div>
+  );
+}
+
+function IRefreshLike() {
+  return <IRefreshIcon />;
+}
+
+function IRefreshIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7v6h6" />
+      <path d="M21 17a9 9 0 0 0-15-6.7L3 13" />
+    </svg>
+  );
+}
+
+function BenefitNum({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <Field label={label} hint={hint}>
+      <Input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(clamp(Number(e.target.value) || 0, min, max))}
+      />
+    </Field>
+  );
+}
+
+function MemberTab({ canManage, canDelete, isAdmin }: { canManage: boolean; canDelete: boolean; isAdmin: boolean }) {
+  const { state, dispatch } = useStore();
   const { push } = useToast();
   const s = state.settings;
 
-  const [tab, setTab] = useState<PageTab>("member");
-
-  /* member */
   const [q, setQ] = useState("");
   const [tier, setTier] = useState("Semua");
   const [status, setStatus] = useState("Semua");
@@ -61,15 +479,6 @@ function Members() {
   const [form, setForm] = useState<{ open: boolean; edit: Customer | null }>({ open: false, edit: null });
   const [detail, setDetail] = useState<string | null>(null);
   const [del, setDel] = useState<Customer | null>(null);
-  const [benefitOpen, setBenefitOpen] = useState(false);
-
-  /* produk */
-  const [pq, setPq] = useState("");
-  const [pCat, setPCat] = useState("Semua");
-
-  /* hadiah */
-  const [rewardForm, setRewardForm] = useState<{ open: boolean; edit: PointReward | null }>({ open: false, edit: null });
-  const [delReward, setDelReward] = useState<PointReward | null>(null);
 
   const members = useMemo(() => state.customers.filter((c) => c.member), [state.customers]);
 
@@ -82,6 +491,7 @@ function Members() {
       return (
         c.name.toLowerCase().includes(needle) ||
         (c.memberNo ?? "").toLowerCase().includes(needle) ||
+        (c.username ?? "").toLowerCase().includes(needle) ||
         c.phone.includes(needle) ||
         (c.email ?? "").toLowerCase().includes(needle)
       );
@@ -103,10 +513,9 @@ function Members() {
       default:
         out = [...out].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
     }
+
     return out;
   }, [members, q, tier, status, sort, s]);
-
-  if (!state.hydrated) return <PageSkel />;
 
   const totals = {
     count: members.length,
@@ -115,16 +524,19 @@ function Members() {
     spend: members.reduce((a, c) => a + (c.spend ?? 0), 0),
     visits: members.reduce((a, c) => a + (c.visits ?? 0), 0),
   };
+
   const tiersArr: MemberTier[] = ["Bronze", "Silver", "Gold", "Platinum"];
   const birthdays = members.filter((c) => isBirthday(c));
+  const detailMember = detail ? state.customers.find((c) => c.id === detail) ?? null : null;
 
   const exportCSV = () => {
     const rows: (string | number)[][] = [
-      ["No Member", "Nama", "HP", "Email", "Lahir", "Tier", "Poin", "Kunjungan", "Belanja", "Bergabung", "Status", "PIN", "Didaftarkan oleh"],
+      ["No Member", "Username", "Nama", "HP", "Email", "Lahir", "Tier", "Poin", "Kunjungan", "Belanja", "Bergabung", "Status", "PIN", "Didaftarkan oleh"],
     ];
     list.forEach((c) =>
       rows.push([
         c.memberNo ?? "-",
+        c.username ?? "-",
         c.name,
         c.phone,
         c.email ?? "",
@@ -144,7 +556,7 @@ function Members() {
   };
 
   const removeMember = (c: Customer) => {
-    if (!can("members.delete")) return;
+    if (!canDelete) return;
     dispatch({ type: "DELETE_CUSTOMERS", ids: [c.id] });
     sfx.remove();
     push({
@@ -155,336 +567,181 @@ function Members() {
     });
   };
 
-  const removeReward = (r: PointReward) => {
-    dispatch({ type: "DELETE_REWARDS", ids: [r.id] });
-    sfx.remove();
-    push({
-      msg: `Hadiah ${r.name} dihapus`,
-      type: "info",
-      actionLabel: "Urungkan",
-      onAction: () => dispatch({ type: "ADD_REWARD", reward: r }),
-    });
-  };
-
-  const detailMember = detail ? state.customers.find((c) => c.id === detail) ?? null : null;
-
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3 rise">
-        <div>
-          <h1 className="font-display font-bold text-2xl flex items-center gap-2">
-            Member & Loyalitas
-            <Badge color="var(--violet)"><IHeart size={10} /> {totals.count} member</Badge>
-          </h1>
-          <p className="text-sm text-mute mt-0.5">
-            Kelola member, lihat katalog produk yang tersinkron, hadiah poin, dan riwayat penukaran.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setBenefitOpen(true)}>
-            <IInfo size={14} /> Benefit member
-          </Button>
-          {isAdmin && tab === "member" && (
-            <Button variant="ghost" size="sm" onClick={exportCSV}>
-              <IDownload size={14} /> CSV
-            </Button>
-          )}
-          {can("members.manage") && tab === "member" && (
-            <Button onClick={() => setForm({ open: true, edit: null })}>
-              <IUserPlus size={16} /> Daftarkan member
-            </Button>
-          )}
-        </div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {[
+          { l: "Member aktif", v: `${totals.active}/${totals.count}`, c: "var(--pandan)", i: <ICheckCircle size={15} /> },
+          { l: "Poin beredar", v: num(totals.points), c: "var(--violet)", i: <IStar size={15} /> },
+          { l: "Belanja member", v: rupiah(totals.spend), c: "var(--accent)", i: <IReceipt size={15} /> },
+          { l: "Kunjungan", v: num(totals.visits), c: "var(--laut)", i: <ITrendUp size={15} /> },
+          { l: "Ultah hari ini", v: `${birthdays.length} orang`, c: "var(--magenta)", i: <ICalendar size={15} /> },
+        ].map((x, i) => (
+          <div key={x.l} className="card p-4 rise" style={{ animationDelay: `${i * 45}ms` }}>
+            <span className="w-8 h-8 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>
+              {x.i}
+            </span>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-faint mt-2.5">{x.l}</p>
+            <p className="font-display font-bold text-lg mt-0.5 tabular-nums truncate" style={{ color: x.c }}>{x.v}</p>
+          </div>
+        ))}
       </div>
 
-      <Segmented
-        value={tab}
-        onChange={(v) => { setTab(v as PageTab); sfx.tap(); }}
-        className="w-fit"
-        options={[
-          { v: "member", l: <><IHeart size={13} /> Member</> },
-          { v: "produk", l: <><IBox size={13} /> Produk Tersedia</> },
-          { v: "hadiah", l: <><IGift size={13} /> Katalog Hadiah</> },
-          { v: "penukaran", l: <><IHistory size={13} /> Penukaran</> },
-        ]}
-      />
-
-      {/* ================= MEMBER ================= */}
-      {tab === "member" && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            {[
-              { l: "Member aktif", v: `${totals.active}/${totals.count}`, c: "var(--pandan)", i: <ICheckCircle size={15} /> },
-              { l: "Poin beredar", v: num(totals.points), c: "var(--violet)", i: <IStar size={15} /> },
-              { l: "Belanja member", v: rupiah(totals.spend), c: "var(--accent)", i: <IReceipt size={15} /> },
-              { l: "Kunjungan", v: num(totals.visits), c: "var(--laut)", i: <ITrendUp size={15} /> },
-              { l: "Ultah hari ini", v: `${birthdays.length} orang`, c: "var(--magenta)", i: <ICalendar size={15} /> },
-            ].map((x, i) => (
-              <div key={x.l} className="card p-4 rise" style={{ animationDelay: `${i * 45}ms` }}>
-                <span className="w-8 h-8 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>
-                  {x.i}
-                </span>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-faint mt-2.5">{x.l}</p>
-                <p className="font-display font-bold text-lg mt-0.5 tabular-nums truncate" style={{ color: x.c }}>{x.v}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="card p-4 space-y-3">
-            <SearchField
-              value={q}
-              onChange={setQ}
-              size="lg"
-              count={list.length}
-              countLabel="member"
-              ariaLabel="Cari member"
-              placeholder="Cari nama, nomor HP, email, atau No. member…"
-              onEscape={() => setQ("")}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => setTier("Semua")} className={`chip ${tier === "Semua" ? "chip-on" : ""}`}>
-                Semua tier
-              </button>
-              {tiersArr.map((t) => (
-                <button key={t} onClick={() => { setTier(t); sfx.tap(); }} className={`chip ${tier === t ? "chip-on" : ""}`}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: TIER_COLOR[t] }} /> {t}
-                  <span className="opacity-60">{members.filter((c) => tierOf(c.spend ?? 0, s) === t).length}</span>
-                </button>
-              ))}
-              <span className="w-px bg-line mx-1 h-6" />
-              <Select
-                label="Status"
-                value={status}
-                onChange={setStatus}
-                className="w-32"
-                options={[
-                  { v: "Semua", l: "Semua status" },
-                  { v: "Aktif", l: "Aktif" },
-                  { v: "Nonaktif", l: "Nonaktif" },
-                ]}
-              />
-              <Select label="Urutkan" value={sort} onChange={setSort} className="w-48" options={SORTS} />
-            </div>
-          </div>
-
-          {list.length === 0 ? (
-            <div className="card">
-              <EmptyState
-                emoji="🧑‍🤝‍🧑"
-                title="Tidak ada member yang cocok"
-                desc={members.length === 0 ? "Daftarkan member pertama lewat tombol di atas atau dari kasir." : "Coba kata kunci atau filter lain."}
-              >
-                {can("members.manage") && (
-                  <Button size="sm" onClick={() => setForm({ open: true, edit: null })}>
-                    <IUserPlus size={14} /> Daftarkan member
-                  </Button>
-                )}
-              </EmptyState>
-            </div>
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {list.map((c, i) => {
-                const t = tierOf(c.spend ?? 0, s);
-                const nt = nextTier(c.spend ?? 0, s);
-                const pctM = memberDiscountPct(c, s);
-                return (
-                  <div
-                    key={c.id}
-                    className="card p-4 rise flex flex-col"
-                    style={{
-                      animationDelay: `${Math.min(i, 12) * 30}ms`,
-                      borderColor: `color-mix(in srgb, ${TIER_COLOR[t]} 30%, transparent)`,
-                    }}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span
-                        className="w-11 h-11 rounded-xl grid place-items-center text-xs font-bold shrink-0"
-                        style={{ color: TIER_COLOR[t], background: `color-mix(in srgb, ${TIER_COLOR[t]} 15%, transparent)` }}
-                      >
-                        {initials(c.name)}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold truncate">{c.name}</p>
-                        <p className="text-[10px] text-faint font-mono truncate">{c.memberNo}</p>
-                      </div>
-                      <Badge color={TIER_COLOR[t]}><IStar size={9} /> {t}</Badge>
-                    </div>
-
-                    <div className="flex items-baseline gap-1.5 mt-3">
-                      <span className="font-display font-bold text-2xl" style={{ color: TIER_COLOR[t] }}>{num(c.points ?? 0)}</span>
-                      <span className="text-[10px] text-faint">poin</span>
-                      {pctM > 0 && <span className="ml-auto text-[11px] font-bold text-pandan">−{pctM}%</span>}
-                    </div>
-
-                    <div className="h-1.5 rounded-full bg-surface2 mt-2 overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${tierProgress(c.spend ?? 0, s)}%`, background: TIER_COLOR[t] }} />
-                    </div>
-                    <p className="text-[10px] text-faint mt-1">
-                      {nt ? `${rupiah(nt.need)} belanja lagi ke ${nt.tier}` : "Tier tertinggi"}
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-2 mt-3 text-[10.5px]">
-                      <div className="rounded-lg border border-line bg-surface p-2">
-                        <p className="text-faint">Kunjungan</p>
-                        <p className="font-bold">{num(c.visits ?? 0)}</p>
-                      </div>
-                      <div className="rounded-lg border border-line bg-surface p-2">
-                        <p className="text-faint">Belanja</p>
-                        <p className="font-bold truncate">{rupiah(c.spend ?? 0)}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-line">
-                      {c.memberActive === false ? <Badge color="var(--chili)">Nonaktif</Badge> : <Badge color="var(--pandan)">Aktif</Badge>}
-                      {!c.pinHash && <Badge color="var(--amber)">PIN belum dibuat</Badge>}
-                      {isBirthday(c) && <Badge color="var(--magenta)">🎂</Badge>}
-                      <span className="ml-auto flex gap-1">
-                        <IconBtn label="Detail" className="!p-1.5" onClick={() => { setDetail(c.id); sfx.tap(); }}>
-                          <IInfo size={14} />
-                        </IconBtn>
-                        {can("members.manage") && (
-                          <IconBtn label="Edit / ganti PIN" className="!p-1.5" onClick={() => setForm({ open: true, edit: c })}>
-                            <IPen size={14} />
-                          </IconBtn>
-                        )}
-                        {can("members.delete") && (
-                          <IconBtn label="Hapus" className="!p-1.5 hover:!text-chili" onClick={() => setDel(c)}>
-                            <ITrash size={14} />
-                          </IconBtn>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ================= PRODUK TERSINKRON ================= */}
-      {tab === "produk" && (
-        <ProductCatalog q={pq} setQ={setPq} cat={pCat} setCat={setPCat} />
-      )}
-
-      {/* ================= KATALOG HADIAH ================= */}
-      {tab === "hadiah" && (
-        <div className="space-y-4">
-          <div className="card p-4 flex flex-wrap items-center gap-2">
-            <p className="text-sm font-bold flex items-center gap-1.5">
-              <IGift size={16} className="text-violet" /> Katalog hadiah poin
-            </p>
-            <span className="text-[11px] text-faint">
-              1 poin = belanja {rupiah(Math.max(100, s.memberPointRate))} · hadiah dikelola admin
-            </span>
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-bold flex items-center gap-1.5">
+            <IUserPlus size={16} className="text-accent" /> Data member
+          </p>
+          <div className="ml-auto flex flex-wrap gap-2">
             {isAdmin && (
-              <Button size="sm" className="ml-auto" onClick={() => setRewardForm({ open: true, edit: null })}>
-                <IPlus size={14} /> Tambah hadiah
+              <Button variant="ghost" size="sm" onClick={exportCSV}>
+                <IDownload size={14} /> CSV
+              </Button>
+            )}
+            {canManage && (
+              <Button size="sm" onClick={() => setForm({ open: true, edit: null })}>
+                <IUserPlus size={14} /> Daftarkan member
               </Button>
             )}
           </div>
-
-          {state.rewards.length === 0 ? (
-            <div className="card">
-              <EmptyState
-                emoji="🎁"
-                title="Belum ada hadiah"
-                desc={isAdmin ? "Tambahkan hadiah pertama supaya member bisa menukar poin." : "Admin belum menambahkan hadiah."}
-              />
-            </div>
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {state.rewards.map((r, i) => (
-                <div key={r.id} className="card p-4 flex flex-col rise" style={{ animationDelay: `${Math.min(i, 12) * 30}ms` }}>
-                  <div className="flex items-start gap-3">
-                    <span className="text-3xl">{r.emoji}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold leading-tight">{r.name}</p>
-                      <p className="text-[11px] text-mute mt-1 leading-snug">{r.desc}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between mt-3">
-                    <span className="font-display font-bold text-violet">{num(r.cost)} poin</span>
-                    <Badge color={r.active ? "var(--pandan)" : "var(--chili)"}>{r.active ? "Aktif" : "Nonaktif"}</Badge>
-                  </div>
-                  {isAdmin && (
-                    <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-line">
-                      <Toggle
-                        small
-                        checked={r.active}
-                        label={`Aktifkan ${r.name}`}
-                        onChange={(v) => { dispatch({ type: "SET_REWARD_ACTIVE", ids: [r.id], active: v }); sfx.tap(); }}
-                      />
-                      <span className="ml-auto flex gap-1">
-                        <IconBtn label="Edit" className="!p-1.5" onClick={() => setRewardForm({ open: true, edit: r })}>
-                          <IPen size={14} />
-                        </IconBtn>
-                        <IconBtn label="Hapus" className="!p-1.5 hover:!text-chili" onClick={() => setDelReward(r)}>
-                          <ITrash size={14} />
-                        </IconBtn>
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-      )}
 
-      {/* ================= RIWAYAT PENUKARAN ================= */}
-      {tab === "penukaran" && (
-        <div className="card overflow-hidden">
-          {state.redemptions.length === 0 ? (
-            <EmptyState emoji="🎟️" title="Belum ada penukaran" desc="Penukaran poin member akan tercatat di sini." />
-          ) : (
-            <div className="overflow-auto max-h-[64vh]">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface2 text-left text-[11px] uppercase tracking-wider text-faint">
-                  <tr>
-                    <th className="px-3 py-3">Waktu</th>
-                    <th className="px-3 py-3">Member</th>
-                    <th className="px-3 py-3">Hadiah</th>
-                    <th className="px-3 py-3 text-right">Poin</th>
-                    <th className="px-3 py-3">Oleh</th>
-                    <th className="px-3 py-3">Via</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {state.redemptions.map((r) => (
-                    <tr key={r.id} className="hover:bg-surface2/60">
-                      <td className="px-3 py-2.5 text-[11px] text-mute">{dateShort(r.ts)} {timeID(r.ts)}</td>
-                      <td className="px-3 py-2.5">
-                        <p className="text-xs font-bold">{r.customerName}</p>
-                        <p className="text-[10px] text-faint font-mono">{r.memberNo}</p>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs">{r.rewardEmoji} {r.rewardName}</td>
-                      <td className="px-3 py-2.5 text-right font-mono font-bold text-violet">−{num(r.cost)}</td>
-                      <td className="px-3 py-2.5 text-xs">{r.by}</td>
-                      <td className="px-3 py-2.5">
-                        <Badge color={r.channel === "portal" ? "var(--violet)" : "var(--laut)"}>{r.channel}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <SearchField
+          value={q}
+          onChange={setQ}
+          size="lg"
+          count={list.length}
+          countLabel="member"
+          ariaLabel="Cari member"
+          placeholder="Cari nama, username, nomor HP, email, atau No. member…"
+          onEscape={() => setQ("")}
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setTier("Semua")} className={`chip ${tier === "Semua" ? "chip-on" : ""}`}>
+            Semua tier
+          </button>
+          {tiersArr.map((t) => (
+            <button key={t} onClick={() => { setTier(t); sfx.tap(); }} className={`chip ${tier === t ? "chip-on" : ""}`}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: TIER_COLOR[t] }} /> {t}
+              <span className="opacity-60">{members.filter((c) => tierOf(c.spend ?? 0, s) === t).length}</span>
+            </button>
+          ))}
+          <span className="w-px bg-line mx-1 h-6" />
+          <Select
+            label="Status"
+            value={status}
+            onChange={setStatus}
+            className="w-32"
+            options={[
+              { v: "Semua", l: "Semua status" },
+              { v: "Aktif", l: "Aktif" },
+              { v: "Nonaktif", l: "Nonaktif" },
+            ]}
+          />
+          <Select label="Urutkan" value={sort} onChange={setSort} className="w-48" options={SORTS} />
+        </div>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            emoji="🧑‍🤝‍🧑"
+            title="Tidak ada member yang cocok"
+            desc={members.length === 0 ? "Daftarkan member pertama lewat tombol di atas atau dari kasir." : "Coba kata kunci atau filter lain."}
+          >
+            {canManage && (
+              <Button size="sm" onClick={() => setForm({ open: true, edit: null })}>
+                <IUserPlus size={14} /> Daftarkan member
+              </Button>
+            )}
+          </EmptyState>
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {list.map((c, i) => {
+            const t = tierOf(c.spend ?? 0, s);
+            const nt = nextTier(c.spend ?? 0, s);
+            const pctM = memberDiscountPct(c, s);
+            return (
+              <div
+                key={c.id}
+                className="card p-4 rise flex flex-col"
+                style={{
+                  animationDelay: `${Math.min(i, 12) * 30}ms`,
+                  borderColor: `color-mix(in srgb, ${TIER_COLOR[t]} 30%, transparent)`,
+                }}
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className="w-11 h-11 rounded-xl grid place-items-center text-xs font-bold shrink-0"
+                    style={{ color: TIER_COLOR[t], background: `color-mix(in srgb, ${TIER_COLOR[t]} 15%, transparent)` }}
+                  >
+                    {initials(c.name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold truncate">{c.name}</p>
+                    <p className="text-[10px] text-faint font-mono truncate">@{c.username ?? c.memberNo}</p>
+                  </div>
+                  <Badge color={TIER_COLOR[t]}>
+                    <IStar size={9} /> {t}
+                  </Badge>
+                </div>
+
+                <div className="flex items-baseline gap-1.5 mt-3">
+                  <span className="font-display font-bold text-2xl" style={{ color: TIER_COLOR[t] }}>
+                    {num(c.points ?? 0)}
+                  </span>
+                  <span className="text-[10px] text-faint">poin</span>
+                  {pctM > 0 && <span className="ml-auto text-[11px] font-bold text-pandan">−{pctM}%</span>}
+                </div>
+
+                <div className="h-1.5 rounded-full bg-surface2 mt-2 overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${tierProgress(c.spend ?? 0, s)}%`, background: TIER_COLOR[t] }} />
+                </div>
+                <p className="text-[10px] text-faint mt-1">
+                  {nt ? `${rupiah(nt.need)} belanja lagi ke ${nt.tier}` : "Tier tertinggi"}
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 mt-3 text-[10.5px]">
+                  <div className="rounded-lg border border-line bg-surface p-2">
+                    <p className="text-faint">Kunjungan</p>
+                    <p className="font-bold">{num(c.visits ?? 0)}</p>
+                  </div>
+                  <div className="rounded-lg border border-line bg-surface p-2">
+                    <p className="text-faint">Belanja</p>
+                    <p className="font-bold truncate">{rupiah(c.spend ?? 0)}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-line">
+                  {c.memberActive === false ? <Badge color="var(--chili)">Nonaktif</Badge> : <Badge color="var(--pandan)">Aktif</Badge>}
+                  {!c.pinHash && <Badge color="var(--amber)">PIN belum dibuat</Badge>}
+                  {isBirthday(c) && <Badge color="var(--magenta)">🎂</Badge>}
+                  <span className="ml-auto flex gap-1">
+                    <IconBtn label="Detail" className="!p-1.5" onClick={() => { setDetail(c.id); sfx.tap(); }}>
+                      <IInfo size={14} />
+                    </IconBtn>
+                    {canManage && (
+                      <IconBtn label="Edit / ganti username & PIN" className="!p-1.5" onClick={() => setForm({ open: true, edit: c })}>
+                        <IPen size={14} />
+                      </IconBtn>
+                    )}
+                    {canDelete && (
+                      <IconBtn label="Hapus" className="!p-1.5 hover:!text-chili" onClick={() => setDel(c)}>
+                        <ITrash size={14} />
+                      </IconBtn>
+                    )}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       <MemberForm open={form.open} edit={form.edit} onClose={() => setForm({ open: false, edit: null })} />
-      <RewardFormModal open={rewardForm.open} edit={rewardForm.edit} onClose={() => setRewardForm({ open: false, edit: null })} />
       <MemberDetail id={detailMember} onClose={() => setDetail(null)} onEdit={(c) => { setDetail(null); setForm({ open: true, edit: c }); }} />
-
-      <MemberBenefitsModal
-        open={benefitOpen}
-        onClose={() => setBenefitOpen(false)}
-        settings={s}
-        canConfigure={isAdmin}
-        onConfigure={() => setTab("hadiah")}
-        roleNote="Tier naik dari akumulasi belanja; poin ditukar lewat katalog hadiah. Angka benefit hanya bisa diubah administrator."
-      />
 
       <Confirm
         open={!!del}
@@ -494,47 +751,56 @@ function Members() {
         confirmLabel="Ya, Hapus"
         desc={`Kartu ${del?.memberNo ?? ""} beserta ${del?.points ?? 0} poin akan dihapus. Riwayat transaksi tetap tersimpan.`}
       />
-      <Confirm
-        open={!!delReward}
-        onClose={() => setDelReward(null)}
-        onConfirm={() => delReward && removeReward(delReward)}
-        title={`Hapus hadiah ${delReward?.name ?? ""}?`}
-        confirmLabel="Ya, Hapus"
-        desc="Hadiah akan hilang dari katalog poin member. Bisa diurungkan lewat notifikasi."
-      />
     </div>
   );
 }
 
-/* Katalog produk — membaca state.products secara langsung sehingga selalu tersinkron realtime dengan halaman Produk/Kasir. */
-function ProductCatalog({
-  q,
-  setQ,
-  cat,
-  setCat,
-}: {
-  q: string;
-  setQ: (v: string) => void;
-  cat: string;
-  setCat: (v: string) => void;
-}) {
+function ProductCatalog() {
   const { state } = useStore();
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("Semua");
+  const [promoOnly, setPromoOnly] = useState(false);
+
+  const allActive = useMemo(() => state.products.filter((p) => p.active), [state.products]);
 
   const products = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return state.products.filter(
-      (p) =>
-        p.active &&
-        (cat === "Semua" || p.category === cat) &&
-        (!needle ||
-          p.name.toLowerCase().includes(needle) ||
-          p.sku.toLowerCase().includes(needle) ||
-          p.category.toLowerCase().includes(needle))
-    );
-  }, [state.products, q, cat]);
+    return allActive.filter((p) => {
+      if (cat !== "Semua" && p.category !== cat) return false;
+      if (promoOnly && !hasDiscount(p)) return false;
+      if (!needle) return true;
+      return (
+        p.name.toLowerCase().includes(needle) ||
+        p.sku.toLowerCase().includes(needle) ||
+        p.category.toLowerCase().includes(needle) ||
+        p.desc.toLowerCase().includes(needle)
+      );
+    });
+  }, [allActive, q, cat, promoOnly]);
+
+  const promoTodayCount = allActive.filter((p) => isAvailableToday(p) && hasDiscount(p)).length;
+  const outTodayCount = allActive.filter((p) => isAvailableToday(p) && stockOf(p, state.products) <= 0).length;
+  const bundleCount = allActive.filter((p) => p.kind === "bundle").length;
 
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { l: "Produk aktif", v: num(allActive.length), c: "var(--accent)", i: <IBox size={15} /> },
+          { l: "Promo hari ini", v: num(promoTodayCount), c: "var(--amber)", i: <IPercent size={15} /> },
+          { l: "Habis hari ini", v: num(outTodayCount), c: "var(--chili)", i: <ITrash size={15} /> },
+          { l: "Paket bundling", v: num(bundleCount), c: "var(--violet)", i: <ITag size={15} /> },
+        ].map((x, i) => (
+          <div key={x.l} className="card p-4 rise" style={{ animationDelay: `${i * 40}ms` }}>
+            <span className="w-8 h-8 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>
+              {x.i}
+            </span>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-faint mt-2.5">{x.l}</p>
+            <p className="font-display font-bold text-lg mt-0.5 tabular-nums" style={{ color: x.c }}>{x.v}</p>
+          </div>
+        ))}
+      </div>
+
       <div className="card p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-bold flex items-center gap-1.5">
@@ -542,36 +808,40 @@ function ProductCatalog({
           </p>
           <Badge color="var(--pandan)">live</Badge>
           <span className="text-[11px] text-faint ml-auto">
-            Tersinkron otomatis dengan halaman Produk & Kasir — hapus produk di sana, hilang juga di sini.
+            Tersinkron otomatis dengan seluruh data produk sistem — produk yang dihapus/dinonaktifkan admin langsung tidak tampil di sini.
           </span>
         </div>
 
         <SearchField
           value={q}
           onChange={setQ}
-          size="md"
+          size="lg"
           count={products.length}
           countLabel="produk"
           ariaLabel="Cari produk"
-          placeholder="Cari nama, SKU, atau kategori produk…"
+          placeholder="Cari nama, SKU, kategori, atau deskripsi produk…"
           onEscape={() => setQ("")}
         />
 
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          <button onClick={() => setCat("Semua")} className={`chip shrink-0 ${cat === "Semua" ? "chip-on" : ""}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setCat("Semua")} className={`chip ${cat === "Semua" ? "chip-on" : ""}`}>
             Semua
           </button>
           {CATEGORIES.map((c) => (
-            <button key={c} onClick={() => setCat(c)} className={`chip shrink-0 ${cat === c ? "chip-on" : ""}`}>
+            <button key={c} onClick={() => setCat(c)} className={`chip ${cat === c ? "chip-on" : ""}`}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[c] }} /> {c}
             </button>
           ))}
+          <span className="w-px bg-line mx-1 h-6" />
+          <button onClick={() => setPromoOnly((v) => !v)} className={`chip ${promoOnly ? "chip-on" : ""}`}>
+            <IPercent size={12} /> Promo hari ini
+          </button>
         </div>
       </div>
 
       {products.length === 0 ? (
         <div className="card">
-          <EmptyState emoji="📦" title="Tidak ada produk" desc="Semua produk nonaktif atau sudah dihapus admin." />
+          <EmptyState emoji="📦" title="Tidak ada produk" desc="Semua produk nonaktif, dihapus, atau tidak cocok dengan filter." />
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -585,15 +855,26 @@ function ProductCatalog({
                 <div className="relative" style={{ aspectRatio: "4 / 3" }}>
                   <ProductThumb name={p.name} photo={p.photo} category={p.category} fill rounded={0} />
                   <span className="absolute top-1.5 left-1.5 flex flex-col items-start gap-1 pointer-events-none">
-                    {promo && <Badge color="var(--amber)"><IPercent size={9} /> {discountLabel(activeDiscount(p))}</Badge>}
+                    {promo && (
+                      <Badge color="var(--amber)">
+                        <IPercent size={9} /> {discountLabel(activeDiscount(p))}
+                      </Badge>
+                    )}
                     {!promo && hasDiscount(p) && <Badge color="var(--amber)">{discountLabel(p.discount)}</Badge>}
                   </span>
                   <span className="absolute top-1.5 right-1.5 flex flex-col items-end gap-1 pointer-events-none">
-                    {p.kind === "bundle" && <Badge color="var(--violet)"><ITag size={9} /> Paket</Badge>}
+                    {p.kind === "bundle" && (
+                      <Badge color="var(--violet)">
+                        <ITag size={9} /> Paket
+                      </Badge>
+                    )}
                     {isLimited(p) && <Badge color="var(--magenta)">Limited</Badge>}
                   </span>
                   {!avail && (
-                    <span className="absolute inset-0 grid place-items-center pointer-events-none" style={{ background: "color-mix(in srgb, var(--bg) 66%, transparent)" }}>
+                    <span
+                      className="absolute inset-0 grid place-items-center pointer-events-none"
+                      style={{ background: "color-mix(in srgb, var(--bg) 66%, transparent)" }}
+                    >
                       <span className="text-[9.5px] font-bold px-2 py-1 rounded-full bg-overlay border border-line2">Libur hari ini</span>
                     </span>
                   )}
@@ -615,6 +896,147 @@ function ProductCatalog({
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RewardCatalog({ isAdmin }: { isAdmin: boolean }) {
+  const { state, dispatch } = useStore();
+  const { push } = useToast();
+  const s = state.settings;
+  const [rewardForm, setRewardForm] = useState<{ open: boolean; edit: PointReward | null }>({ open: false, edit: null });
+  const [delReward, setDelReward] = useState<PointReward | null>(null);
+
+  const removeReward = (r: PointReward) => {
+    dispatch({ type: "DELETE_REWARDS", ids: [r.id] });
+    sfx.remove();
+    push({
+      msg: `Hadiah ${r.name} dihapus`,
+      type: "info",
+      actionLabel: "Urungkan",
+      onAction: () => dispatch({ type: "ADD_REWARD", reward: r }),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-4 flex flex-wrap items-center gap-2">
+        <p className="text-sm font-bold flex items-center gap-1.5">
+          <IGift size={16} className="text-violet" /> Katalog hadiah poin
+        </p>
+        <span className="text-[11px] text-faint">
+          1 poin = belanja {rupiah(Math.max(100, s.memberPointRate))} · hadiah dikelola admin
+        </span>
+        {isAdmin && (
+          <Button size="sm" className="ml-auto" onClick={() => setRewardForm({ open: true, edit: null })}>
+            <IPlus size={14} /> Tambah hadiah
+          </Button>
+        )}
+      </div>
+
+      {state.rewards.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            emoji="🎁"
+            title="Belum ada hadiah"
+            desc={isAdmin ? "Tambahkan hadiah pertama supaya member bisa menukar poin." : "Admin belum menambahkan hadiah."}
+          />
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {state.rewards.map((r, i) => (
+            <div key={r.id} className="card p-4 flex flex-col rise" style={{ animationDelay: `${Math.min(i, 12) * 30}ms` }}>
+              <div className="flex items-start gap-3">
+                <span className="text-3xl">{r.emoji}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold leading-tight">{r.name}</p>
+                  <p className="text-[11px] text-mute mt-1 leading-snug">{r.desc}</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-3">
+                <span className="font-display font-bold text-violet">{num(r.cost)} poin</span>
+                <Badge color={r.active ? "var(--pandan)" : "var(--chili)"}>{r.active ? "Aktif" : "Nonaktif"}</Badge>
+              </div>
+              {isAdmin && (
+                <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-line">
+                  <Toggle
+                    small
+                    checked={r.active}
+                    label={`Aktifkan ${r.name}`}
+                    onChange={(v) => {
+                      dispatch({ type: "SET_REWARD_ACTIVE", ids: [r.id], active: v });
+                      sfx.tap();
+                    }}
+                  />
+                  <span className="ml-auto flex gap-1">
+                    <IconBtn label="Edit" className="!p-1.5" onClick={() => setRewardForm({ open: true, edit: r })}>
+                      <IPen size={14} />
+                    </IconBtn>
+                    <IconBtn label="Hapus" className="!p-1.5 hover:!text-chili" onClick={() => setDelReward(r)}>
+                      <ITrash size={14} />
+                    </IconBtn>
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <RewardFormModal open={rewardForm.open} edit={rewardForm.edit} onClose={() => setRewardForm({ open: false, edit: null })} />
+
+      <Confirm
+        open={!!delReward}
+        onClose={() => setDelReward(null)}
+        onConfirm={() => delReward && removeReward(delReward)}
+        title={`Hapus hadiah ${delReward?.name ?? ""}?`}
+        confirmLabel="Ya, Hapus"
+        desc="Hadiah akan hilang dari katalog poin member. Bisa diurungkan lewat notifikasi."
+      />
+    </div>
+  );
+}
+
+function RedemptionHistory() {
+  const { state } = useStore();
+
+  return (
+    <div className="card overflow-hidden">
+      {state.redemptions.length === 0 ? (
+        <EmptyState emoji="🎟️" title="Belum ada penukaran" desc="Penukaran poin member akan tercatat di sini." />
+      ) : (
+        <div className="overflow-auto max-h-[64vh]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-surface2 text-left text-[11px] uppercase tracking-wider text-faint">
+              <tr>
+                <th className="px-3 py-3">Waktu</th>
+                <th className="px-3 py-3">Member</th>
+                <th className="px-3 py-3">Hadiah</th>
+                <th className="px-3 py-3 text-right">Poin</th>
+                <th className="px-3 py-3">Oleh</th>
+                <th className="px-3 py-3">Via</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {state.redemptions.map((r) => (
+                <tr key={r.id} className="hover:bg-surface2/60">
+                  <td className="px-3 py-2.5 text-[11px] text-mute">{dateShort(r.ts)} {timeID(r.ts)}</td>
+                  <td className="px-3 py-2.5">
+                    <p className="text-xs font-bold">{r.customerName}</p>
+                    <p className="text-[10px] text-faint font-mono">{r.memberNo}</p>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs">{r.rewardEmoji} {r.rewardName}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-bold text-violet">−{num(r.cost)}</td>
+                  <td className="px-3 py-2.5 text-xs">{r.by}</td>
+                  <td className="px-3 py-2.5">
+                    <Badge color={r.channel === "portal" ? "var(--violet)" : "var(--laut)"}>{r.channel}</Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -682,7 +1104,9 @@ function RewardFormModal({ open, edit, onClose }: { open: boolean; edit: PointRe
       title={edit ? `Edit hadiah · ${edit.name}` : "Tambah hadiah poin"}
       footer={
         <div className="flex gap-2 justify-end">
-          <Button variant="ghost" onClick={onClose}>Batal</Button>
+          <Button variant="ghost" onClick={onClose}>
+            Batal
+          </Button>
           <Button onClick={save}>{edit ? "Simpan" : "Tambah hadiah"}</Button>
         </div>
       }
@@ -757,7 +1181,7 @@ function MemberDetail({ id, onClose, onEdit }: { id: Customer | null; onClose: (
       footer={
         <div className="flex gap-2">
           <Button variant="ghost" className="flex-1" onClick={() => onEdit(c)}>
-            <IPen size={15} /> Edit / ganti PIN
+            <IPen size={15} /> Edit username / PIN
           </Button>
         </div>
       }
@@ -779,9 +1203,11 @@ function MemberDetail({ id, onClose, onEdit }: { id: Customer | null; onClose: (
             </span>
             <div className="min-w-0">
               <p className="font-display font-bold text-lg leading-tight truncate">{c.name}</p>
-              <p className="text-[11px] text-faint font-mono">{c.memberNo} · gabung {dateShort(c.joinedAt ?? Date.now())}</p>
+              <p className="text-[11px] text-faint font-mono">@{c.username ?? "-"} · gabung {dateShort(c.joinedAt ?? Date.now())}</p>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
-                <Badge color={TIER_COLOR[t]}><IStar size={10} /> {t}</Badge>
+                <Badge color={TIER_COLOR[t]}>
+                  <IStar size={10} /> {t}
+                </Badge>
                 {c.memberActive === false && <Badge color="var(--chili)">nonaktif</Badge>}
                 {isBirthday(c) && <Badge color="var(--magenta)">🎂 hari ini</Badge>}
               </div>
@@ -789,7 +1215,9 @@ function MemberDetail({ id, onClose, onEdit }: { id: Customer | null; onClose: (
           </div>
 
           <div className="flex items-baseline gap-2 mt-3">
-            <span className="font-display font-bold text-3xl" style={{ color: TIER_COLOR[t] }}>{num(c.points ?? 0)}</span>
+            <span className="font-display font-bold text-3xl" style={{ color: TIER_COLOR[t] }}>
+              {num(c.points ?? 0)}
+            </span>
             <span className="text-[11px] text-faint">poin</span>
           </div>
 
@@ -803,8 +1231,14 @@ function MemberDetail({ id, onClose, onEdit }: { id: Customer | null; onClose: (
 
         <div className="grid grid-cols-2 gap-3 text-[11px]">
           <div className="rounded-xl border border-line bg-surface p-3">
+            <p className="text-faint text-[10px] uppercase font-bold">Username</p>
+            <p className="font-mono font-bold mt-0.5 truncate">@{c.username ?? "-"}</p>
+          </div>
+          <div className="rounded-xl border border-line bg-surface p-3">
             <p className="text-faint text-[10px] uppercase font-bold">HP</p>
-            <p className="font-mono font-bold mt-0.5 flex items-center gap-1"><IPhone size={11} /> {c.phone}</p>
+            <p className="font-mono font-bold mt-0.5 flex items-center gap-1">
+              <IPhone size={11} /> {c.phone}
+            </p>
           </div>
           <div className="rounded-xl border border-line bg-surface p-3">
             <p className="text-faint text-[10px] uppercase font-bold">Email</p>
@@ -814,9 +1248,9 @@ function MemberDetail({ id, onClose, onEdit }: { id: Customer | null; onClose: (
             <p className="text-faint text-[10px] uppercase font-bold">Lahir</p>
             <p className="font-bold mt-0.5">{c.birthDate ? dateShort(new Date(c.birthDate).getTime()) : "—"}</p>
           </div>
-          <div className="rounded-xl border border-line bg-surface p-3">
+          <div className="rounded-xl border border-line bg-surface p-3 col-span-2">
             <p className="text-faint text-[10px] uppercase font-bold">PIN portal</p>
-            <p className="font-bold mt-0.5">{c.pinHash ? "Sudah dibuat" : "Belum dibuat"}</p>
+            <p className="font-bold mt-0.5">{c.pinHash ? "Sudah dibuat oleh kasir" : "Belum dibuat"}</p>
           </div>
         </div>
 
