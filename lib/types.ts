@@ -7,6 +7,10 @@ export type LogoShape = "rounded" | "circle" | "square";
 export type ProductKind = "single" | "bundle";
 export type Role = "admin" | "kasir";
 
+/* Tipe pesanan: makan di tempat (dine-in) atau bawa pulang (takeaway). */
+export type OrderType = "dinein" | "takeaway";
+export type TableStatus = "kosong" | "terisi";
+
 /* Tier naik otomatis dari AKUMULASI BELANJA, bukan poin. */
 export type MemberTier = "Bronze" | "Silver" | "Gold" | "Platinum";
 
@@ -71,6 +75,24 @@ export interface Transaction {
   status: TxStatus;
   shiftId?: string;
   isTest?: boolean;
+  /* Tipe pesanan & meja (dine-in) */
+  orderType?: OrderType;
+  tableId?: string | null;
+  tableLabel?: string | null;
+}
+
+/* Meja / kursi untuk dine-in. Status terisi otomatis saat pembayaran dine-in selesai. */
+export interface DiningTable {
+  id: string;
+  label: string;
+  seats: number;
+  area: string;
+  status: TableStatus;
+  active: boolean;
+  txId: string | null;
+  customerName: string | null;
+  occupiedAt: number | null;
+  note?: string;
 }
 
 export interface Customer {
@@ -261,6 +283,7 @@ export interface AppState {
   notifications: AppNotification[];
   notifReadAt: number;
   memberSession: MemberSession | null;
+  tables: DiningTable[];
 }
 
 export type SeedData = Omit<AppState, "hydrated">;

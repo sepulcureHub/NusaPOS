@@ -3,13 +3,13 @@
 import { createContext, useContext, useEffect, useReducer } from "react";
 import type { ReactNode } from "react";
 import type {
-  AppNotification, AppState, Customer, DayPromo, DemoData, Discount, HeldOrder, NotifKind,
+  AppNotification, AppState, Customer, DayPromo, DemoData, DiningTable, Discount, HeldOrder, NotifKind,
   PointReward, Product, Redemption, Role, SavedView, Session, Settings, ShiftPlan, ShiftSession,
   Transaction, TxStatus, User,
 } from "./types";
 import { CATEGORY_EMOJI } from "./types";
 import {
-  DEMO_BEHAVIOR, DEMO_SEED, DEMO_SETTINGS, DEMO_USERS, DEMO_VIEWS, STORE_CLOSE, WALK_IN_CUSTOMER,
+  DEMO_BEHAVIOR, DEMO_SEED, DEMO_SETTINGS, DEMO_TABLES, DEMO_USERS, DEMO_VIEWS, STORE_CLOSE, WALK_IN_CUSTOMER,
 } from "./demo-data";
 import { buildSeed, defaultShiftPlans } from "./seed";
 import { uid } from "./format";
@@ -72,13 +72,19 @@ export type Action =
   | { type: "RECONCILE_SHIFT"; id: string; closingCash: number; note: string }
   | { type: "EXTEND_SHIFT"; id: string; minutes: number }
   | { type: "AUTO_CLOSE_SHIFTS"; now: number }
+  | { type: "ADD_TABLE"; table: DiningTable }
+  | { type: "UPDATE_TABLE"; table: DiningTable }
+  | { type: "DELETE_TABLES"; ids: string[] }
+  | { type: "RESTORE_TABLES"; tables: DiningTable[] }
+  | { type: "SET_TABLE_ACTIVE"; ids: string[]; active: boolean }
+  | { type: "FREE_TABLE"; id: string }
   | { type: "SET_NOTIF_READ"; ts: number }
   | { type: "CLEAR_NOTIFS" };
 
 const initial: AppState = {
   hydrated: false, products: [], transactions: [], customers: [], held: [], views: [],
   settings: DEMO_SETTINGS, users: [], session: null, shiftPlans: [], shiftSessions: [],
-  rewards: [], redemptions: [], notifications: [], notifReadAt: 0, memberSession: null,
+  rewards: [], redemptions: [], notifications: [], notifReadAt: 0, memberSession: null, tables: [],
 };
 
 function pushNote(list: AppNotification[], n: Omit<AppNotification, "id" | "ts">): AppNotification[] {
@@ -117,10 +123,11 @@ function autoCloseSessions(sessions: ShiftSession[], now: number) {
   return changed ? next : sessions;
 }
 
-function emptyDemo(settings: Settings): DemoData {
+function emptyDemo(settings: Settings, tables: DiningTable[]): DemoData {
   return {
     products: [], transactions: [], customers: [{ ...WALK_IN_CUSTOMER }], held: [], views: [],
     settings, shiftPlans: [], shiftSessions: [], rewards: [], redemptions: [], notifications: [], notifReadAt: 0,
+    tables,
   };
 }
 
@@ -128,7 +135,7 @@ function core(state: AppState, a: Action): AppState {
   switch (a.type) {
     case "HYDRATE": return a.state;
     case "RESET": return { ...a.data, users: state.users, session: state.session, memberSession: null, hydrated: true };
-    case "WIPE_DEMO": return { ...state, ...emptyDemo(state.settings), hydrated: true };
+    case "WIPE_DEMO": return { ...state, ...emptyDemo(state.settings, state.tables), hydrated: true };
 
     case "ADD_PRODUCT": return { ...state, products: [a.product, ...state.products] };
     case "UPDATE_PRODUCT": return { ...state, products: state.products.map((p) => (p.id === a.product.id ? a.product : p)) };
@@ -164,21 +171,35 @@ function core(state: AppState, a: Action): AppState {
       const sess = state.session ? state.users.find((u) => u.id === state.session!.userId) : null;
       const open = sess && shiftEligible(sess) ? state.shiftSessions.find((s) => s.userId === sess.id && s.closedAt === null) : null;
       const tx = a.tx.shiftId || !open ? a.tx : { ...a.tx, shiftId: open.id };
+      let tables = state.tables;
+      if (tx.orderType === "dinein" && tx.tableId) {
+        tables = state.tables.map((t) => (t.id === tx.tableId
+          ? { ...t, status: "terisi" as const, txId: tx.id, customerName: tx.customerName, occupiedAt: tx.ts }
+          : t));
+      }
       return {
         ...state,
         transactions: [...state.transactions, tx],
         products: applyStock(state.products, tx.items, -1),
         customers: tx.status === "Selesai" ? applyMember(state.customers, tx, 1) : state.customers,
+        tables,
       };
     }
     case "SET_TX_STATUS": {
       const tx = state.transactions.find((t) => t.id === a.id);
       if (!tx || tx.status === a.status) return state;
+      let tables = state.tables;
+      if (a.status === "Refund" && tx.tableId) {
+        tables = state.tables.map((t) => (t.id === tx.tableId && t.txId === tx.id
+          ? { ...t, status: "kosong" as const, txId: null, customerName: null, occupiedAt: null }
+          : t));
+      }
       return {
         ...state,
         transactions: state.transactions.map((t) => (t.id === a.id ? { ...t, status: a.status } : t)),
         products: applyStock(state.products, tx.items, a.status === "Refund" ? 1 : -1),
         customers: applyMember(state.customers, tx, a.status === "Refund" ? -1 : 1),
+        tables,
       };
     }
     case "HOLD": return { ...state, held: [a.order, ...state.held] };
@@ -325,6 +346,19 @@ function core(state: AppState, a: Action): AppState {
       return next === state.shiftSessions ? state : { ...state, shiftSessions: next };
     }
 
+    case "ADD_TABLE": return { ...state, tables: [...state.tables, a.table] };
+    case "UPDATE_TABLE": return { ...state, tables: state.tables.map((t) => (t.id === a.table.id ? a.table : t)) };
+    case "DELETE_TABLES": return { ...state, tables: state.tables.filter((t) => !a.ids.includes(t.id)) };
+    case "RESTORE_TABLES": {
+      const have = new Set(state.tables.map((t) => t.id));
+      return { ...state, tables: [...state.tables, ...a.tables.filter((t) => !have.has(t.id))] };
+    }
+    case "SET_TABLE_ACTIVE": return { ...state, tables: state.tables.map((t) => (a.ids.includes(t.id) ? { ...t, active: a.active } : t)) };
+    case "FREE_TABLE": return {
+      ...state,
+      tables: state.tables.map((t) => (t.id === a.id ? { ...t, status: "kosong" as const, txId: null, customerName: null, occupiedAt: null } : t)),
+    };
+
     case "SET_NOTIF_READ": return { ...state, notifReadAt: Math.max(state.notifReadAt, a.ts) };
     case "CLEAR_NOTIFS": return { ...state, notifications: [], notifReadAt: Date.now() };
 
@@ -356,7 +390,12 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
     case "MEMBER_LOGOUT": note = { kind: "member", title: "Member keluar dari portal", actor: "Portal member" }; break;
 
     case "ADD_TX":
-      if (!a.tx.isTest) note = { kind: "sale", title: `Penjualan baru ${a.tx.id}`, detail: `${a.tx.customerName} · ${a.tx.method} · Rp ${a.tx.total.toLocaleString("id-ID")}`, actor: a.tx.cashier };
+      if (!a.tx.isTest) {
+        const orderInfo = a.tx.orderType === "dinein"
+          ? ` · Makan di sini${a.tx.tableLabel ? ` (${a.tx.tableLabel})` : ""}`
+          : a.tx.orderType === "takeaway" ? " · Bawa pulang" : "";
+        note = { kind: "sale", title: `Penjualan baru ${a.tx.id}`, detail: `${a.tx.customerName} · ${a.tx.method} · Rp ${a.tx.total.toLocaleString("id-ID")}${orderInfo}`, actor: a.tx.cashier };
+      }
       break;
     case "SET_TX_STATUS":
       note = { kind: a.status === "Refund" ? "refund" : "sale", title: `${a.status === "Refund" ? "Refund" : "Batalkan refund"} ${a.id}`, actor: actorOf(state) };
@@ -419,6 +458,17 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
       if (next.shiftSessions === state.shiftSessions) break;
       const closed = next.shiftSessions.filter((s, i) => s.closedAt !== null && state.shiftSessions[i]?.closedAt === null);
       note = { kind: "shift", title: `${closed.length || ""} shift ditutup otomatis`.replace("  ", " "), detail: "Sesuai jam jadwal", actor: "Sistem" };
+      break;
+    }
+
+    case "ADD_TABLE": note = { kind: "system", title: `Meja ditambahkan: ${a.table.label}`, detail: `${a.table.area} · ${a.table.seats} kursi`, actor: actorOf(state) }; break;
+    case "UPDATE_TABLE": note = { kind: "system", title: `Meja diperbarui: ${a.table.label}`, actor: actorOf(state) }; break;
+    case "DELETE_TABLES": note = { kind: "system", title: `${a.ids.length} meja dihapus`, actor: actorOf(state) }; break;
+    case "RESTORE_TABLES": note = { kind: "system", title: `${a.tables.length} meja dipulihkan`, actor: actorOf(state) }; break;
+    case "SET_TABLE_ACTIVE": note = { kind: "system", title: `${a.ids.length} meja ${a.active ? "diaktifkan" : "dinonaktifkan"}`, actor: actorOf(state) }; break;
+    case "FREE_TABLE": {
+      const t = state.tables.find((x) => x.id === a.id);
+      note = { kind: "system", title: `Meja ${t?.label ?? ""} dikosongkan`, detail: "Tamu selesai / meja siap dipakai lagi", actor: actorOf(state) };
       break;
     }
 
@@ -537,6 +587,22 @@ function normalizeCustomers(raw: Customer[] | undefined): Customer[] {
   });
 }
 
+function normalizeTables(raw: DiningTable[] | undefined): DiningTable[] {
+  const list = Array.isArray(raw) && raw.length ? raw : DEMO_TABLES.map((t) => ({ ...t }));
+  return list.map((t) => ({
+    id: t.id || uid(),
+    label: String(t.label || "Meja"),
+    seats: Math.max(1, Math.min(20, Number(t.seats) || 2)),
+    area: String(t.area || "Indoor"),
+    status: t.status === "terisi" ? "terisi" : "kosong",
+    active: t.active !== false,
+    txId: t.txId ?? null,
+    customerName: t.customerName ?? null,
+    occupiedAt: t.occupiedAt ?? null,
+    note: t.note ?? "",
+  }));
+}
+
 const LEGACY_ACCENT: Record<string, Settings["accent"]> = { amber: "ungu", magenta: "lembayung" };
 
 function normalize(raw: Partial<AppState>): AppState {
@@ -628,6 +694,7 @@ function normalize(raw: Partial<AppState>): AppState {
     rewards, redemptions, notifications,
     notifReadAt: Number(raw.notifReadAt) || 0,
     memberSession,
+    tables: normalizeTables(raw.tables),
   };
 }
 

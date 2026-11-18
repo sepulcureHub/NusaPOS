@@ -7,8 +7,10 @@ import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
 import type {
   Customer,
+  DiningTable,
   Discount,
   HeldOrder,
+  OrderType,
   PayMethod,
   Product,
   Settings,
@@ -51,6 +53,7 @@ import { SearchField } from "@/components/SearchField";
 import { MemberForm } from "@/components/MemberForm";
 import { MemberPicker } from "@/components/MemberPicker";
 import { MemberBenefitsModal } from "@/components/MemberBenefits";
+import { TableGrid } from "@/components/TableGrid";
 import {
   Badge,
   Button,
@@ -84,6 +87,7 @@ import {
   IShield,
   ISparkle,
   IStar,
+  IStore,
   ITag,
   ITrash,
   IUser,
@@ -190,6 +194,7 @@ function Kasir() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [memberFormOpen, setMemberFormOpen] = useState(false);
   const [benefitOpen, setBenefitOpen] = useState(false);
+  const [tablesOpen, setTablesOpen] = useState(false);
 
   const [quick, setQuick] = useState<Product | null>(null);
   const [lastTx, setLastTx] = useState<Transaction | null>(null);
@@ -226,6 +231,9 @@ function Kasir() {
   const heldList = isAdmin ? localHeld : state.held;
 
   const mPct = memberDiscountPct(customer, settings);
+
+  const activeTables = state.tables.filter((t) => t.active);
+  const freeTableCount = activeTables.filter((t) => t.status === "kosong").length;
 
   const stockById = (id: string) => {
     const p = state.products.find((x) => x.id === id);
@@ -427,7 +435,17 @@ function Kasir() {
     }
   };
 
-  const confirmPay = (method: PayMethod, tendered: number) => {
+  const confirmPay = (
+    method: PayMethod,
+    tendered: number,
+    orderType: OrderType,
+    tableId: string | null,
+  ) => {
+    const table =
+      orderType === "dinein" && tableId
+        ? state.tables.find((t) => t.id === tableId) ?? null
+        : null;
+
     const tx: Transaction = {
       id: isAdmin ? `TEST-${uid()}` : nextTxId(state.transactions),
       ts: Date.now(),
@@ -452,6 +470,9 @@ function Kasir() {
       status: "Selesai",
       shiftId: myShift?.id,
       isTest: isAdmin,
+      orderType,
+      tableId: orderType === "dinein" ? tableId : null,
+      tableLabel: table?.label ?? null,
     };
 
     /* Admin: tidak dispatch ke sistem sama sekali. Hanya local lastTx untuk preview struk uji. */
@@ -465,16 +486,25 @@ function Kasir() {
 
     if (isAdmin) {
       push({
-        msg: "Transaksi uji selesai — tidak tercatat di riwayat, stok, poin, atau shift.",
+        msg: "Transaksi uji selesai — tidak tercatat di riwayat, stok, poin, shift, atau meja.",
         type: "info",
         dur: 5200,
       });
-    } else if (willEarn > 0) {
-      push({
-        msg: `${customer.name} mendapat +${willEarn} poin member`,
-        type: "ok",
-        dur: 4200,
-      });
+    } else {
+      if (orderType === "dinein" && table) {
+        push({
+          msg: `${table.label} sekarang terisi atas nama ${customer.name}`,
+          type: "ok",
+          dur: 4200,
+        });
+      }
+      if (willEarn > 0) {
+        push({
+          msg: `${customer.name} mendapat +${willEarn} poin member`,
+          type: "ok",
+          dur: 4200,
+        });
+      }
     }
   };
 
@@ -542,6 +572,19 @@ function Kasir() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setTablesOpen(true);
+                sfx.tap();
+              }}
+              className="chip"
+            >
+              <IStore size={12} /> Meja{" "}
+              <span className="opacity-70">
+                {freeTableCount}/{activeTables.length}
+              </span>
+            </button>
+
             <button
               onClick={() => {
                 setBenefitOpen(true);
@@ -920,6 +963,20 @@ function Kasir() {
         }
       />
 
+      <Modal
+        open={tablesOpen}
+        onClose={() => setTablesOpen(false)}
+        title="Ketersediaan meja"
+        wide
+        footer={
+          <div className="flex justify-end">
+            <Button onClick={() => setTablesOpen(false)}>Tutup</Button>
+          </div>
+        }
+      >
+        <TableGrid tables={state.tables} />
+      </Modal>
+
       <PaymentSheet
         open={payOpen}
         onClose={closePay}
@@ -929,6 +986,7 @@ function Kasir() {
         lastTx={lastTx}
         onConfirm={confirmPay}
         isAdmin={isAdmin}
+        tables={state.tables}
       />
     </div>
   );
@@ -1809,6 +1867,7 @@ function PaymentSheet({
   lastTx,
   onConfirm,
   isAdmin,
+  tables,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1823,12 +1882,20 @@ function PaymentSheet({
   customerName: string;
   settings: Settings;
   lastTx: Transaction | null;
-  onConfirm: (method: PayMethod, tendered: number) => void;
+  onConfirm: (
+    method: PayMethod,
+    tendered: number,
+    orderType: OrderType,
+    tableId: string | null,
+  ) => void;
   isAdmin: boolean;
+  tables: DiningTable[];
 }) {
   const [method, setMethod] = useState<PayMethod>("Tunai");
   const [tendered, setTendered] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [orderType, setOrderType] = useState<OrderType>("dinein");
+  const [tableId, setTableId] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -1842,6 +1909,8 @@ function PaymentSheet({
       setMethod("Tunai");
       setTendered("");
       setProcessing(false);
+      setOrderType("dinein");
+      setTableId(null);
     }
 
     if (!open) {
@@ -1853,7 +1922,14 @@ function PaymentSheet({
   const total = totals.total;
   const cash = Number(tendered) || 0;
   const change = cash - total;
-  const canPay = method !== "Tunai" || cash >= total;
+
+  const activeTables = tables.filter((t) => t.active);
+  const freeCount = activeTables.filter((t) => t.status === "kosong").length;
+  const selectedTable = tableId
+    ? activeTables.find((t) => t.id === tableId) ?? null
+    : null;
+  const tableOk = orderType === "takeaway" || !!selectedTable;
+  const canPay = (method !== "Tunai" || cash >= total) && tableOk;
 
   const quickAmounts = useMemo(() => {
     if (total <= 0) return [];
@@ -1878,7 +1954,12 @@ function PaymentSheet({
     const amount = method === "Tunai" ? cash : total;
 
     timer.current = setTimeout(() => {
-      onConfirm(method, amount);
+      onConfirm(
+        method,
+        amount,
+        orderType,
+        orderType === "dinein" ? tableId : null,
+      );
       setProcessing(false);
     }, 320);
   };
@@ -1918,6 +1999,16 @@ function PaymentSheet({
             {rupiah(lastTx.total)}
           </p>
 
+          <div className="flex flex-wrap justify-center gap-1.5 mt-3">
+            <Badge color={lastTx.orderType === "dinein" ? "var(--accent)" : "var(--amber)"}>
+              {lastTx.orderType === "dinein" ? <IStore size={10} /> : <IBox size={10} />}
+              {lastTx.orderType === "dinein" ? " Makan di sini" : " Bawa pulang"}
+            </Badge>
+            {lastTx.orderType === "dinein" && lastTx.tableLabel && (
+              <Badge color="var(--violet)">Meja {lastTx.tableLabel}</Badge>
+            )}
+          </div>
+
           {lastTx.isTest && (
             <div
               className="mt-4 rounded-xl border px-3 py-2.5 text-[11px] text-left"
@@ -1933,7 +2024,8 @@ function PaymentSheet({
               <p className="text-mute mt-1 leading-relaxed">
                 Transaksi ini hanya untuk testing fitur. Tidak tercatat di
                 riwayat transaksi, tidak mengurangi stok, tidak menambah omzet,
-                tidak memberi poin member, dan tidak memengaruhi shift.
+                tidak memberi poin member, tidak memengaruhi shift, dan tidak
+                mengisi meja.
               </p>
             </div>
           )}
@@ -2032,6 +2124,7 @@ function PaymentSheet({
       open={open}
       onClose={onClose}
       title={`Pembayaran • ${customerName}`}
+      wide={orderType === "dinein"}
       footer={
         <div className="flex gap-2 justify-end">
           <Button variant="ghost" onClick={onClose} disabled={processing}>
@@ -2064,8 +2157,85 @@ function PaymentSheet({
             <span className="text-mute">
               <b className="text-ink">Mode uji admin.</b> Pembayaran ini hanya
               untuk testing alur, struk, QRIS, dan member. Tidak akan dicatat ke
-              sistem.
+              sistem dan tidak mengisi meja.
             </span>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-[11px] font-bold uppercase tracking-wider text-faint mb-1.5">
+            Tipe pesanan
+          </label>
+          <Segmented
+            value={orderType}
+            onChange={(v) => {
+              setOrderType(v as OrderType);
+              setTableId(null);
+              sfx.tap();
+            }}
+            className="w-full"
+            options={[
+              {
+                v: "dinein",
+                l: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <IStore size={13} /> Makan di sini
+                  </span>
+                ),
+              },
+              {
+                v: "takeaway",
+                l: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <IBox size={13} /> Bawa pulang
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
+
+        {orderType === "dinein" && (
+          <div className="rounded-2xl border border-line bg-surface p-3.5">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <p className="text-xs font-bold flex items-center gap-1.5">
+                <IStore size={13} className="text-accent" /> Pilih meja
+              </p>
+              {selectedTable ? (
+                <Badge color="var(--accent)">Terpilih: {selectedTable.label}</Badge>
+              ) : (
+                <Badge color="var(--amber)">Belum pilih meja</Badge>
+              )}
+              <span className="ml-auto text-[10.5px] text-faint">
+                {freeCount} meja kosong
+              </span>
+            </div>
+
+            {freeCount === 0 ? (
+              <div
+                className="rounded-xl border px-3 py-2.5 text-[11px]"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--chili) 38%, transparent)",
+                  background: "color-mix(in srgb, var(--chili) 8%, transparent)",
+                }}
+              >
+                <p className="font-bold text-chili">Semua meja sedang terisi.</p>
+                <p className="text-mute mt-1 leading-relaxed">
+                  Pilih <b className="text-ink">Bawa pulang</b>, atau kosongkan
+                  meja dulu di halaman Member → Meja.
+                </p>
+              </div>
+            ) : (
+              <TableGrid
+                tables={tables}
+                selectable
+                selectedId={tableId}
+                onSelect={(id) => {
+                  setTableId(id);
+                  sfx.tap();
+                }}
+              />
+            )}
           </div>
         )}
 

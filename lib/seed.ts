@@ -1,7 +1,7 @@
 import type { Customer, PointReward, Product, SeedData, ShiftPlan, ShiftSession, Transaction, TxItem } from "./types";
 import {
   DEMO_BEHAVIOR, DEMO_CUSTOMERS, DEMO_DEFAULT_DAYS, DEMO_HOUR_WEIGHTS, DEMO_PRODUCTS,
-  DEMO_REWARDS, DEMO_SETTINGS, DEMO_SHIFT_TEMPLATE, DEMO_USERS, DEMO_VIEWS, OPERATING_HOURS, STORE_CLOSE,
+  DEMO_REWARDS, DEMO_SETTINGS, DEMO_SHIFT_TEMPLATE, DEMO_TABLES, DEMO_USERS, DEMO_VIEWS, OPERATING_HOURS, STORE_CLOSE,
 } from "./demo-data";
 import { calcTotals, clamp, startOfDay } from "./format";
 import { isAvailableOn, toTxItem } from "./pricing";
@@ -152,6 +152,9 @@ export function buildSeed(seed: number): SeedData {
         customerId: cust.id, customerName: cust.name, cashier,
         status: r() < B.refundChance ? "Refund" : "Selesai",
         shiftId: ses?.id,
+        orderType: "takeaway",
+        tableId: null,
+        tableLabel: null,
       });
     }
 
@@ -173,6 +176,7 @@ export function buildSeed(seed: number): SeedData {
     views: DEMO_VIEWS.map((v) => ({ ...v })), settings: { ...DEMO_SETTINGS },
     users, session: null, shiftPlans, shiftSessions,
     rewards, redemptions: [], notifications: [], notifReadAt: 0, memberSession: null,
+    tables: DEMO_TABLES.map((t) => ({ ...t })),
   };
 }
 

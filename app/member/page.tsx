@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth, useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
-import type { Customer, MemberTier, PointReward } from "@/lib/types";
+import type { Customer, DiningTable, MemberTier, PointReward } from "@/lib/types";
 import { CATEGORIES, CATEGORY_COLORS } from "@/lib/types";
 import { DEMO_SETTINGS } from "@/lib/demo-data";
 import { clamp, dateShort, download, num, rupiah, timeID, toCSV, uid } from "@/lib/format";
@@ -30,10 +30,12 @@ import {
   stockOf,
   todayPromo,
 } from "@/lib/pricing";
+import { DEFAULT_AREAS, makeTable, nextTableLabel, tableStats } from "@/lib/tables";
 import { ProductThumb } from "@/components/ProductThumb";
 import { SearchField } from "@/components/SearchField";
 import { MemberForm } from "@/components/MemberForm";
 import { MemberBenefitsPanel, TierLadder } from "@/components/MemberBenefits";
+import { TableGrid } from "@/components/TableGrid";
 import {
   Badge,
   Button,
@@ -54,6 +56,7 @@ import {
   IBox,
   ICalendar,
   ICheckCircle,
+  IClock,
   IDownload,
   IGift,
   IHeart,
@@ -65,16 +68,18 @@ import {
   IReceipt,
   IShield,
   IStar,
+  IStore,
   ITag,
   ITrash,
   ITrendUp,
+  IUser,
   IUserPlus,
 } from "@/components/icons";
 import { IHistory } from "@/components/icons-extra";
 
-type PageTab = "benefit" | "member" | "produk" | "hadiah" | "penukaran";
+type PageTab = "benefit" | "member" | "produk" | "meja" | "hadiah" | "penukaran";
 
-const VALID_TABS: PageTab[] = ["benefit", "member", "produk", "hadiah", "penukaran"];
+const VALID_TABS: PageTab[] = ["benefit", "member", "produk", "meja", "hadiah", "penukaran"];
 
 const SORTS = [
   { v: "points", l: "Poin terbanyak" },
@@ -120,7 +125,7 @@ function Members() {
             </Badge>
           </h1>
           <p className="text-sm text-mute mt-0.5">
-            Benefit member, data member, produk tersedia, katalog hadiah, dan riwayat penukaran.
+            Benefit member, data member, produk tersedia, denah meja, katalog hadiah, dan riwayat penukaran.
           </p>
         </div>
 
@@ -149,6 +154,7 @@ function Members() {
           { v: "benefit", l: <><IHeart size={13} /> Benefit Member</> },
           { v: "member", l: <><IUserPlus size={13} /> Member</> },
           { v: "produk", l: <><IBox size={13} /> Produk Tersedia</> },
+          { v: "meja", l: <><IStore size={13} /> Meja</> },
           { v: "hadiah", l: <><IGift size={13} /> Katalog Hadiah</> },
           { v: "penukaran", l: <><IHistory size={13} /> Penukaran</> },
         ]}
@@ -157,6 +163,7 @@ function Members() {
       {tab === "benefit" && <BenefitTab />}
       {tab === "member" && <MemberTab canManage={can("members.manage")} canDelete={can("members.delete")} isAdmin={isAdmin} />}
       {tab === "produk" && <ProductCatalog />}
+      {tab === "meja" && <TableTab isAdmin={isAdmin} />}
       {tab === "hadiah" && <RewardCatalog isAdmin={isAdmin} />}
       {tab === "penukaran" && <RedemptionHistory />}
     </div>
@@ -447,6 +454,194 @@ function BenefitNum({
         onChange={(e) => onChange(clamp(Number(e.target.value) || 0, min, max))}
       />
     </Field>
+  );
+}
+
+/* ---------- MEJA: pemantauan live + kosongkan (staf) + kelola denah (admin) ---------- */
+function TableTab({ isAdmin }: { isAdmin: boolean }) {
+  const { state, dispatch } = useStore();
+  const { push } = useToast();
+  const [form, setForm] = useState<{ open: boolean; edit: DiningTable | null }>({ open: false, edit: null });
+  const [del, setDel] = useState<DiningTable | null>(null);
+
+  const stats = tableStats(state.tables);
+  const occupied = state.tables.filter((t) => t.active && t.status === "terisi");
+
+  const freeTable = (t: DiningTable) => {
+    dispatch({ type: "FREE_TABLE", id: t.id });
+    sfx.remove();
+    push({ msg: `Meja ${t.label} dikosongkan — siap dipakai lagi`, type: "ok" });
+  };
+
+  const removeTable = (t: DiningTable) => {
+    dispatch({ type: "DELETE_TABLES", ids: [t.id] });
+    sfx.remove();
+    push({
+      msg: `Meja ${t.label} dihapus`,
+      type: "info",
+      actionLabel: "Urungkan",
+      onAction: () => dispatch({ type: "RESTORE_TABLES", tables: [t] }),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { l: "Total meja", v: num(stats.total), c: "var(--accent)", i: <IStore size={15} /> },
+          { l: "Kosong", v: num(stats.free), c: "var(--pandan)", i: <ICheckCircle size={15} /> },
+          { l: "Terisi", v: num(stats.busy), c: "var(--chili)", i: <IUser size={15} /> },
+          { l: "Kursi tersedia", v: num(stats.freeSeats), c: "var(--violet)", i: <IUser size={15} /> },
+        ].map((x, i) => (
+          <div key={x.l} className="card p-4 rise" style={{ animationDelay: `${i * 40}ms` }}>
+            <span className="w-8 h-8 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>{x.i}</span>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-faint mt-2.5">{x.l}</p>
+            <p className="font-display font-bold text-lg mt-0.5 tabular-nums" style={{ color: x.c }}>{x.v}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <p className="text-sm font-bold flex items-center gap-1.5"><IStore size={16} className="text-accent" /> Denah meja</p>
+          <Badge color="var(--pandan)">live</Badge>
+          <span className="text-[11px] text-faint">Terisi otomatis saat pembayaran dine-in selesai.</span>
+          {isAdmin && (
+            <Button size="sm" className="ml-auto" onClick={() => setForm({ open: true, edit: null })}>
+              <IPlus size={14} /> Tambah meja
+            </Button>
+          )}
+        </div>
+        <TableGrid tables={state.tables} />
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-3 flex items-center gap-1.5"><IUser size={16} className="text-chili" /> Meja sedang terisi ({occupied.length})</p>
+        {occupied.length === 0 ? (
+          <p className="text-[11.5px] text-faint py-3 text-center">Semua meja kosong. Meja akan muncul di sini setelah pembayaran dine-in.</p>
+        ) : (
+          <ul className="space-y-2">
+            {occupied.map((t) => (
+              <li key={t.id} className="rounded-xl border border-line bg-surface p-3 flex flex-wrap items-center gap-3">
+                <span className="w-9 h-9 rounded-lg grid place-items-center text-[11px] font-bold shrink-0" style={{ color: "var(--chili)", background: "color-mix(in srgb, var(--chili) 14%, transparent)" }}>{t.label}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-bold truncate">{t.customerName ?? "Tamu"}</span>
+                  <span className="block text-[10px] text-faint">{t.area} · {t.seats} kursi{t.occupiedAt ? ` · sejak ${timeID(t.occupiedAt)}` : ""}</span>
+                </span>
+                <Button size="sm" variant="soft" onClick={() => freeTable(t)}>
+                  <ICheckCircle size={13} /> Kosongkan
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-[11px] text-faint mt-3 flex gap-1.5"><IInfo size={12} className="shrink-0 mt-0.5" /> Kosongkan meja saat tamu selesai / pulang. Refund transaksi dine-in juga otomatis mengosongkan mejanya.</p>
+      </div>
+
+      {isAdmin && (
+        <div className="card p-5">
+          <p className="text-sm font-bold mb-3 flex items-center gap-1.5"><IShield size={16} className="text-accent" /> Kelola denah meja</p>
+          <ul className="space-y-2">
+            {state.tables.map((t) => (
+              <li key={t.id} className="rounded-xl border border-line bg-surface p-3 flex flex-wrap items-center gap-3">
+                <span className="w-9 h-9 rounded-lg grid place-items-center text-[11px] font-bold shrink-0" style={{ color: t.status === "terisi" ? "var(--chili)" : "var(--pandan)", background: `color-mix(in srgb, ${t.status === "terisi" ? "var(--chili)" : "var(--pandan)"} 14%, transparent)` }}>{t.label}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-bold truncate">{t.label} · {t.area}</span>
+                  <span className="block text-[10px] text-faint">{t.seats} kursi · {t.status === "terisi" ? "terisi" : "kosong"}{t.active ? "" : " · nonaktif"}</span>
+                </span>
+                <label className="flex items-center gap-2 text-[11px] font-bold text-mute">
+                  {t.active ? "Aktif" : "Nonaktif"}
+                  <Toggle small checked={t.active} label={`Aktifkan ${t.label}`} onChange={(v) => { dispatch({ type: "SET_TABLE_ACTIVE", ids: [t.id], active: v }); sfx.tap(); }} />
+                </label>
+                <span className="flex gap-1">
+                  <IconBtn label="Edit meja" className="!p-1.5" onClick={() => setForm({ open: true, edit: t })}><IPen size={14} /></IconBtn>
+                  <IconBtn label="Hapus meja" className="!p-1.5 hover:!text-chili" onClick={() => setDel(t)}><ITrash size={14} /></IconBtn>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <TableFormModal open={form.open} edit={form.edit} onClose={() => setForm({ open: false, edit: null })} />
+
+      <Confirm
+        open={!!del}
+        onClose={() => setDel(null)}
+        onConfirm={() => del && removeTable(del)}
+        title={`Hapus meja ${del?.label ?? ""}?`}
+        confirmLabel="Ya, Hapus"
+        desc="Meja dihapus dari denah. Bisa diurungkan lewat notifikasi."
+      />
+    </div>
+  );
+}
+
+function TableFormModal({ open, edit, onClose }: { open: boolean; edit: DiningTable | null; onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const { push } = useToast();
+  const [label, setLabel] = useState("");
+  const [area, setArea] = useState(DEFAULT_AREAS[0]);
+  const [seats, setSeats] = useState("2");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    if (edit) {
+      setLabel(edit.label);
+      setArea(edit.area);
+      setSeats(String(edit.seats));
+    } else {
+      setArea(DEFAULT_AREAS[0]);
+      setLabel(nextTableLabel(state.tables, DEFAULT_AREAS[0]));
+      setSeats("2");
+    }
+    setErr("");
+  }, [open, edit]);
+
+  const areaOptions = useMemo(() => {
+    const list = [...DEFAULT_AREAS];
+    state.tables.forEach((t) => { if (!list.includes(t.area)) list.push(t.area); });
+    if (edit && !list.includes(edit.area)) list.push(edit.area);
+    return list.map((a) => ({ v: a, l: a }));
+  }, [state.tables, edit]);
+
+  const save = () => {
+    const lb = label.trim();
+    if (!lb) { setErr("Label meja wajib diisi"); sfx.error(); return; }
+    if (state.tables.some((t) => t.id !== edit?.id && t.label.toLowerCase() === lb.toLowerCase())) { setErr("Label meja sudah dipakai"); sfx.error(); return; }
+    const n = Math.max(1, Math.min(20, Number(seats) || 2));
+    if (edit) {
+      dispatch({ type: "UPDATE_TABLE", table: { ...edit, label: lb, area, seats: n } });
+      push({ msg: `Meja ${lb} diperbarui`, type: "ok" });
+    } else {
+      dispatch({ type: "ADD_TABLE", table: makeTable({ label: lb, area, seats: n }) });
+      push({ msg: `Meja ${lb} ditambahkan (${area} · ${n} kursi)`, type: "ok" });
+    }
+    sfx.success();
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={edit ? `Edit meja · ${edit.label}` : "Tambah meja"}
+      footer={<div className="flex gap-2 justify-end"><Button variant="ghost" onClick={onClose}>Batal</Button><Button onClick={save}>{edit ? "Simpan" : "Tambah meja"}</Button></div>}>
+      <div className="space-y-4">
+        <Field label="Label meja *" error={err} hint="Contoh: T07, O05, B04">
+          <Input value={label} onChange={(e) => { setLabel(e.target.value); setErr(""); }} placeholder="cth. T07" autoFocus />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Area">
+            <Select value={area} onChange={setArea} options={areaOptions} />
+          </Field>
+          <Field label="Jumlah kursi" hint="1–20">
+            <Input type="number" min={1} max={20} inputMode="numeric" value={seats} onChange={(e) => setSeats(e.target.value)} />
+          </Field>
+        </div>
+        {edit && edit.status === "terisi" && (
+          <p className="text-[11px] text-faint flex gap-1.5"><IInfo size={12} className="shrink-0 mt-0.5" /> Meja ini sedang terisi. Mengubah label/area/kursi tidak mengosongkannya.</p>
+        )}
+      </div>
+    </Modal>
   );
 }
 

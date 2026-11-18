@@ -2,7 +2,7 @@
  * NusaPOS — PUSAT DATA DEMO
  */
 
-import type { Category, Customer, DayPromo, Discount, ProductKind, SavedView, Settings, User } from "./types";
+import type { Category, Customer, DayPromo, DiningTable, Discount, ProductKind, SavedView, Settings, User } from "./types";
 import { ALL_DAYS, WEEKEND_DAYS } from "./pricing";
 import { hashPassword } from "./auth";
 
@@ -94,6 +94,23 @@ export const DEMO_CUSTOMERS: Customer[] = [
     portal: true, pinHash,
     createdBy: "u-kasir2", createdByName: "Ayu Lestari",
   },
+];
+
+/* Denah meja demo — semua mulai kosong; terisi otomatis saat pembayaran dine-in selesai. */
+export const DEMO_TABLES: DiningTable[] = [
+  { id: "t1", label: "T01", seats: 2, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t2", label: "T02", seats: 2, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t3", label: "T03", seats: 4, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t4", label: "T04", seats: 4, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t5", label: "T05", seats: 4, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t6", label: "T06", seats: 6, area: "Indoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t7", label: "O01", seats: 2, area: "Outdoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t8", label: "O02", seats: 4, area: "Outdoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t9", label: "O03", seats: 4, area: "Outdoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t10", label: "O04", seats: 6, area: "Outdoor", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t11", label: "B01", seats: 1, area: "Bar", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t12", label: "B02", seats: 1, area: "Bar", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
+  { id: "t13", label: "B03", seats: 2, area: "Bar", status: "kosong", active: true, txId: null, customerName: null, occupiedAt: null },
 ];
 
 export interface DemoProductDef {

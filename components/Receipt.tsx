@@ -52,6 +52,8 @@ export function Receipt({ tx, settings, print = true, member }: {
       <Row l="Jam" r={timeID(tx.ts)} />
       <Row l="Kasir" r={tx.cashier} />
       <Row l="Pelanggan" r={tx.customerName} />
+      {tx.orderType && <Row l="Tipe" r={tx.orderType === "dinein" ? "Makan di sini" : "Bawa pulang"} />}
+      {tx.orderType === "dinein" && tx.tableLabel && <Row l="Meja" r={tx.tableLabel} />}
       {tx.memberNo && <Row l="Member" r={`${tx.memberNo}${tx.memberTier ? ` (${tx.memberTier})` : ""}`} />}
       {tx.status === "Refund" && <p className="text-center font-bold mt-1">*** REFUND ***</p>}
       <div className="border-t border-dashed border-neutral-400 my-2" />

@@ -18,14 +18,16 @@ import {
   DAY_FULL, activeDiscount, discountLabel, effectivePrice, hasDiscount,
   isAvailableToday, isLimited, nextAvailableDay, stockOf, todayPromo,
 } from "@/lib/pricing";
+import { tableStats } from "@/lib/tables";
 import { MemberLoginForm } from "@/components/MemberAuth";
 import { BrandLockup } from "@/components/Brand";
 import { ProductThumb } from "@/components/ProductThumb";
 import { SearchField } from "@/components/SearchField";
+import { TableGrid } from "@/components/TableGrid";
 import { Badge, Button, Confirm, EmptyState, Field, Input, Modal, PageSkel, Segmented } from "@/components/ui";
 import {
   IArrowRight, IBox, ICalendar, ICheckCircle, IClock, IGift, IHeart, IInfo, ILogOut,
-  IPercent, IReceipt, IRefresh, IShield, IStar, ITag, IUser,
+  IPercent, IReceipt, IRefresh, IShield, IStar, IStore, ITag, IUser,
 } from "@/components/icons";
 import { IHistory } from "@/components/icons-extra";
 import { MemberBenefitsPanel } from "@/components/MemberBenefits";
@@ -64,7 +66,7 @@ function Portal() {
   const s = state.settings;
   const me = state.memberSession ? state.customers.find((c) => c.id === state.memberSession!.customerId) ?? null : null;
 
-  const [tab, setTab] = useState<"ringkasan" | "produk" | "poin" | "transaksi" | "profil">("ringkasan");
+  const [tab, setTab] = useState<"ringkasan" | "produk" | "meja" | "poin" | "transaksi" | "profil">("ringkasan");
   const [redeem, setRedeem] = useState<string | null>(null);
   const [changePin, setChangePin] = useState(false);
 
@@ -109,6 +111,8 @@ function Portal() {
   const rewards = state.rewards.filter((r) => r.active);
   const bday = isBirthday(me);
   const promoTodayCount = state.products.filter((p) => p.active && isAvailableToday(p) && hasDiscount(p)).length;
+  const totalTableCount = state.tables.filter((t) => t.active).length;
+  const freeTableCount = state.tables.filter((t) => t.active && t.status === "kosong").length;
 
   const doRedeem = () => {
     const r = rewards.find((x) => x.id === redeem);
@@ -190,6 +194,7 @@ function Portal() {
           options={[
             { v: "ringkasan", l: <>Ringkasan</> },
             { v: "produk", l: <><IBox size={13} /> Produk & Promo</> },
+            { v: "meja", l: <><IStore size={13} /> Meja</> },
             { v: "poin", l: <><IGift size={13} /> Poin & Hadiah</> },
             { v: "transaksi", l: <><IReceipt size={13} /> Transaksi</> },
             { v: "profil", l: <><IUser size={13} /> Profil</> },
@@ -197,15 +202,27 @@ function Portal() {
 
         {tab === "ringkasan" && (
           <div className="space-y-4">
-            <button onClick={() => { setTab("produk"); sfx.tap(); }}
-              className="card p-4 w-full text-left flex items-center gap-3 hover:border-line2 transition-colors">
-              <span className="w-10 h-10 rounded-xl grid place-items-center bg-amber text-amber-ink shrink-0"><IPercent size={18} /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-bold">Produk & promo hari ini</span>
-                <span className="block text-[11px] text-faint mt-0.5">{promoTodayCount} promo aktif · lihat menu yang tersedia untukmu</span>
-              </span>
-              <IArrowRight size={16} className="text-accent shrink-0" />
-            </button>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <button onClick={() => { setTab("produk"); sfx.tap(); }}
+                className="card p-4 text-left flex items-center gap-3 hover:border-line2 transition-colors">
+                <span className="w-10 h-10 rounded-xl grid place-items-center bg-amber text-amber-ink shrink-0"><IPercent size={18} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold">Produk & promo hari ini</span>
+                  <span className="block text-[11px] text-faint mt-0.5">{promoTodayCount} promo aktif · lihat menu untukmu</span>
+                </span>
+                <IArrowRight size={16} className="text-accent shrink-0" />
+              </button>
+
+              <button onClick={() => { setTab("meja"); sfx.tap(); }}
+                className="card p-4 text-left flex items-center gap-3 hover:border-line2 transition-colors">
+                <span className="w-10 h-10 rounded-xl grid place-items-center bg-accent-soft text-accent shrink-0"><IStore size={18} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold">Meja kosong</span>
+                  <span className="block text-[11px] text-faint mt-0.5">{freeTableCount}/{totalTableCount} meja kosong · cek sebelum datang</span>
+                </span>
+                <IArrowRight size={16} className="text-accent shrink-0" />
+              </button>
+            </div>
 
             <div className="card p-5">
               <h2 className="font-display font-bold text-base flex items-center gap-2"><IHeart size={16} className="text-chili" /> Benefit kamu saat ini</h2>
@@ -232,6 +249,8 @@ function Portal() {
         )}
 
         {tab === "produk" && <MemberProducts pct={pct} />}
+
+        {tab === "meja" && <MemberTables />}
 
         {tab === "poin" && (
           <div className="space-y-4">
@@ -301,6 +320,7 @@ function Portal() {
                     <span className="flex gap-1 ml-auto">
                       {(t.memberPoints ?? 0) > 0 && <Badge color="var(--violet)">+{t.memberPoints}</Badge>}
                       {(t.memberDiscount ?? 0) > 0 && <Badge color="var(--pandan)">hemat {rupiah(t.memberDiscount ?? 0)}</Badge>}
+                      {t.orderType === "dinein" && t.tableLabel && <Badge color="var(--accent)">Meja {t.tableLabel}</Badge>}
                       {t.status === "Refund" && <Badge color="var(--chili)">refund</Badge>}
                     </span>
                     <span className="font-mono font-bold text-sm w-24 text-right">{rupiah(t.total)}</span>
@@ -319,6 +339,43 @@ function Portal() {
         desc={`Poin kamu akan dipotong ${num(rewards.find((r) => r.id === redeem)?.cost ?? 0)}. Hadiah diklaim dengan menunjukkan riwayat ini ke kasir.`} />
 
       <ChangePinModal open={changePin} onClose={() => setChangePin(false)} me={me} />
+    </div>
+  );
+}
+
+/* ---------- MEJA (pemantauan live untuk member, sebelum datang) ---------- */
+function MemberTables() {
+  const { state } = useStore();
+  const stats = tableStats(state.tables);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { l: "Meja kosong", v: num(stats.free), c: "var(--pandan)", i: <ICheckCircle size={15} /> },
+          { l: "Sedang terisi", v: num(stats.busy), c: "var(--chili)", i: <IStore size={15} /> },
+          { l: "Kursi tersedia", v: num(stats.freeSeats), c: "var(--accent)", i: <IUser size={15} /> },
+        ].map((x) => (
+          <div key={x.l} className="card p-3.5">
+            <span className="w-7 h-7 rounded-lg grid place-items-center" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 14%, transparent)` }}>{x.i}</span>
+            <p className="text-[10px] text-faint font-bold uppercase tracking-wider mt-2">{x.l}</p>
+            <p className="font-display font-bold text-lg mt-0.5 tabular-nums" style={{ color: x.c }}>{x.v}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <h2 className="font-display font-bold text-base flex items-center gap-2"><IStore size={16} className="text-accent" /> Denah meja</h2>
+          <Badge color="var(--pandan)">live</Badge>
+          <span className="text-[11px] text-faint ml-auto">Cek meja kosong sebelum kamu datang.</span>
+        </div>
+        <TableGrid tables={state.tables} />
+        <p className="text-[11px] text-faint mt-3 flex gap-1.5">
+          <IInfo size={13} className="shrink-0 mt-0.5" />
+          Status meja diperbarui otomatis saat kasir menyelesaikan pembayaran <b className="text-ink">Makan di sini</b>. Meja hijau = kosong, merah = terisi.
+        </p>
+      </div>
     </div>
   );
 }
