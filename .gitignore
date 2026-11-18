@@ -34,6 +34,13 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# lint & test artifacts
+.eslintcache
+/coverage
+/playwright-report
+/test-results
+/.nyc_output
+
 # editor
 .idea
 .vscode/*

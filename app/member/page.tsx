@@ -56,7 +56,6 @@ import {
   IBox,
   ICalendar,
   ICheckCircle,
-  IClock,
   IDownload,
   IGift,
   IHeart,

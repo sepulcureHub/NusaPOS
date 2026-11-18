@@ -1,5 +1,11 @@
 # NusaPOS
 
+[![CI](https://github.com/sepulcureHub/NusaPOS/actions/workflows/ci.yml/badge.svg)](https://github.com/sepulcureHub/NusaPOS/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)
+![React](https://img.shields.io/badge/React-19-61dafb.svg)
+
 **Sistem Point of Sale (POS) berbasis web untuk UMKM Indonesia** — dibangun dengan Next.js, React, TypeScript, dan Tailwind CSS.
 
 NusaPOS adalah aplikasi kasir modern dengan fitur:
@@ -35,6 +41,7 @@ NusaPOS adalah aplikasi kasir modern dengan fitur:
 - [Mode Uji Admin di Kasir](#mode-uji-admin-di-kasir)
 - [Notifikasi Sistem](#notifikasi-sistem)
 - [Sinkronisasi Data](#sinkronisasi-data)
+- [Quality Gate](#quality-gate)
 - [Struktur Folder](#struktur-folder)
 - [Instalasi](#instalasi)
 - [Environment Variables](#environment-variables)
@@ -57,8 +64,10 @@ NusaPOS adalah aplikasi kasir modern dengan fitur:
 |---|---|
 | Next.js 16 | Framework React full-stack (App Router) |
 | React 19 | UI library |
-| TypeScript 5 | Static typing |
+| TypeScript 5 | Static typing (`strict: true`) |
 | Tailwind CSS v4 | Styling utility-first (via `@tailwindcss/postcss`) |
+| ESLint 9 + flat config | Linting via CLI (Next.js 16 menghapus `next lint`) |
+| GitHub Actions | CI otomatis: lint, build, typecheck |
 | localStorage | Penyimpanan demo lokal |
 | Google Maps Embed | Peta lokasi toko |
 | Nominatim / Photon | Fallback geocoding publik |
@@ -239,7 +248,7 @@ Halaman `/pengaturan` (bertingkat sesuai role):
 
 | Role | Akses |
 |---|---|
-| **admin** | Seluruh sistem: dashboard, kasir, produk, semua transaksi, refund, ekspor CSV, semua member, hapus member, sesuaikan poin, analitik, semua shift, pengaturan toko & pengguna, kelola data demo, **kelola denah meja**, atur benefit member |
+| **admin** | Seluruh sistem: dashboard, kasir, produk, semua transaksi, refund, ekspor CSV, semua member, hapus member, sesuaikan poin, analitik, semua shift, pengaturan toko & pengguna, **kelola denah meja**, atur benefit member |
 | **kasir** | Ruang kerja operasional: kasir (`pos`), lihat transaksi sendiri, cari & daftarkan/edit member, shift sendiri, pengaturan pribadi, **kosongkan meja**, benefit member baca-saja |
 
 Detail teknis (`lib/auth.ts`):
@@ -458,6 +467,34 @@ Semua halaman membaca **satu sumber data yang sama** (`StoreProvider` di `lib/st
 
 ---
 
+## Quality Gate
+
+Proyek ini dilengkapi pipeline kualitas otomatis untuk menjaga standar kode:
+
+| Script | Fungsi | Diblokir CI |
+|---|---|---|
+| `npm run lint` | ESLint 9 flat config (`eslint-config-next`) | Ya, error memblokir |
+| `npm run typecheck` | TypeScript strict mode (`tsc --noEmit`) | Ya, error memblokir |
+| `npm run build` | Build produksi Next.js 16 | Ya |
+| `npm run check` | Gabungan lint + typecheck | Ya |
+
+**CI otomatis** via GitHub Actions (lihat `.github/workflows/ci.yml`) jalan di setiap push ke `main` dan PR. Step lint terpisah dari build karena **Next.js 16 menghapus `next lint`** dan `next build` tidak lagi menjalankan ESLint.
+
+**Strategi lint**:
+
+- **Error** = memblokir CI (bug nyata: hooks salah, JSX invalid)
+- **Warning** = terlihat di log, tidak memblokir (daftar kerjaan)
+
+Beberapa override yang disengaja (dengan alasan):
+
+| Rule | Alasan |
+|---|---|
+| `@next/next/no-img-element: off` | Foto produk/logo disimpan sebagai data URL base64 — `next/image` tidak mengoptimalkan data URL |
+| `react/no-unescaped-entities: off` | Banyak teks UI Bahasa Indonesia memakai tanda kutip langsung |
+| `@next/next/no-html-link-for-pages: warn` | Sebagian navigasi internal masih pakai `<a>` (mis. header portal member) |
+
+---
+
 ## Struktur Folder
 
 ```txt
@@ -493,7 +530,6 @@ NusaPOS/
 │   ├── MemberBenefits.tsx      # panel benefit + TierLadder premium
 │   ├── MemberForm.tsx          # form daftar/edit member
 │   ├── MemberPicker.tsx        # pilih pelanggan di kasir
-│   ├── PaymentModal.tsx        # legacy (alur bayar aktif: PaymentSheet di app/kasir)
 │   ├── ProductAnalytics.tsx    # insight per produk
 │   ├── ProductForm.tsx         # form produk & paket
 │   ├── ProductThumb.tsx        # thumbnail emoji/foto
@@ -528,12 +564,17 @@ NusaPOS/
 │   ├── store.tsx               # StoreProvider + reducer + persist + aksi meja
 │   ├── tables.ts               # ★ helper meja (statistik, area, label, factory)
 │   └── types.ts                # seluruh tipe data (termasuk DiningTable & OrderType)
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions: lint + build + typecheck
 ├── .env.example
 ├── .gitignore
+├── eslint.config.mjs           # ESLint 9 flat config (Next.js 16)
+├── LICENSE                     # MIT License
 ├── next.config.ts
 ├── package.json
 ├── postcss.config.mjs
-├── tsconfig.json
+├── tsconfig.json               # strict: true, noEmit: true
 └── README.md
 ```
 
@@ -555,7 +596,10 @@ npm install
 cp .env.example .env.local
 # isi API key Google Maps jika punya — tanpa ini aplikasi tetap jalan
 
-# 4. jalankan development server
+# 4. (opsional) verifikasi kualitas
+npm run check    # lint + typecheck
+
+# 5. jalankan development server
 npm run dev
 ```
 
@@ -597,6 +641,10 @@ Tanpa kedua key: peta memakai embed publik dan geocoding fallback ke **Nominatim
 | `dev` | `npm run dev` | Development server |
 | `build` | `npm run build` | Build produksi |
 | `start` | `npm run start` | Jalankan hasil build |
+| `lint` | `npm run lint` | ESLint (Next.js 16: CLI langsung) |
+| `lint:fix` | `npm run lint:fix` | ESLint dengan auto-fix |
+| `typecheck` | `npm run typecheck` | TypeScript strict check (`tsc --noEmit`) |
+| `check` | `npm run check` | Gabungan lint + typecheck |
 
 ---
 
@@ -709,7 +757,7 @@ Yang perlu diingat:
 4. **PIN member tersimpan hanya di-obfuscate** (XOR + base64) di fitur "ingat login" — bukan enkripsi.
 5. **Pembayaran disimulasikan** — QRIS & kartu (EDC demo) tidak terhubung payment gateway sungguhan.
 6. **Kuota localStorage** (±5MB) — banyak foto beresolusi besar bisa memenuhi storage; penulisan gagal diabaikan diam-diam.
-7. **Belum ada** automated tests, lint script, CI, dan file LICENSE.
+7. **Belum ada** automated tests dan integrasi payment sungguhan. Lint, type-check, dan CI sudah aktif (lihat badge CI di atas).
 8. Batas bawaan: 300 notifikasi, 500 riwayat penukaran, 5 login member tersimpan, stok maks 99.999, kursi meja 1–20.
 
 ---
@@ -731,6 +779,7 @@ Yang perlu diingat:
 | Shift tertutup sendiri | Auto-close mengikuti jam akhir jadwal (fallback jam tutup toko 22.00). Perpanjang shift sebelum jamnya tiba. |
 | Ingin mulai bersih | Pengaturan → Data → hapus data demo, atau acak ulang untuk data segar. |
 | Port 3000 dipakai | `npm run dev -- -p 3001` |
+| CI merah / lint error | Jalankan `npm run check` lokal. Output-nya tunjukkan issue tracker untuk dibantu debug. |
 
 ---
 
@@ -746,8 +795,7 @@ Rencana pengembangan (belum diimplementasikan):
 - [ ] Dukungan printer thermal & laci kas
 - [ ] Laporan pajak & akuntansi yang lebih lengkap
 - [ ] Fitur meja lanjutan: pindah meja, timer durasi duduk, denah per lantai
-- [ ] Automated tests + lint + CI
-- [ ] Lisensi resmi
+- [ ] Automated tests (Vitest + Playwright) untuk alur kritis
 
 ---
 
@@ -759,9 +807,14 @@ Ringkasan milestone pengembangan terbaru:
 2. **Landing page dirapikan** — section "Simulasi kenaikan tier" dihapus; benefit member tampil lebih bersih.
 3. **Portal member diperkaya** — tab **Produk & Promo** (katalog live + estimasi harga member) dan tampilan benefit yang lebih modern (kartu tier premium, mini-grid bonus per tier, tanpa duplikasi).
 4. **Sistem meja dine-in** — tipe pesanan Makan di sini / Bawa pulang di kasir, denah meja visual, meja otomatis terisi saat bayar & kosong saat refund, pemantauan live di halaman Member & Portal Member, kelola denah oleh admin, dan info meja di struk.
+5. **Quality gate** — ditambah lisensi MIT, ESLint 9 flat config, typecheck strict, dan CI otomatis via GitHub Actions.
 
 ---
 
 ## License
 
-Proyek ini belum menyertakan file `LICENSE`. Seluruh hak cipta dipegang pemilik repository sampai lisensi ditetapkan. Untuk penggunaan open source, tambahkan file `LICENSE` (misalnya MIT) lalu perbarui bagian ini.
+Dirilis di bawah **MIT License** — lihat file [`LICENSE`](LICENSE) untuk teks lengkap.
+
+Bebas dipakai, dimodifikasi, dan didistribusikan (termasuk komersial), dengan syarat menyertakan pemberitahuan hak cipta dan lisensi.
+
+> Catatan: proyek ini demo lokal. Pembayaran bersifat simulasi dan penyimpanan data berbasis `localStorage` — **belum untuk transaksi produksi**. Lihat [Known Limitations](#known-limitations).
