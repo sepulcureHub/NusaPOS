@@ -18,7 +18,9 @@ export function tierThresholds(s: Settings) {
   return { Bronze: 0, Silver: silver, Gold: gold, Platinum: platinum } as Record<MemberTier, number>;
 }
 
+/** Bonus diskon per tier — persis angka yang diatur admin (Bronze ikut bisa diatur). */
 export function tierBonus(tier: MemberTier, s: Settings) {
+  if (tier === "Bronze") return clamp(s.memberBonusBronze || 0, 0, 25);
   if (tier === "Silver") return clamp(s.memberBonusSilver || 0, 0, 25);
   if (tier === "Gold") return clamp(s.memberBonusGold || 0, 0, 25);
   if (tier === "Platinum") return clamp(s.memberBonusPlatinum || 0, 0, 25);
@@ -52,6 +54,7 @@ export function tierProgress(spend: number, s: Settings) {
   return clamp(((Math.max(0, spend || 0) - floor) / (ceil - floor)) * 100, 0, 100);
 }
 
+/** Total potongan riil di kasir (dasar + bonus tier). Dipakai untuk simulasi/preview, bukan penjelasan tier. */
 export function totalTierPct(tier: MemberTier, s: Settings) {
   return clamp((s.memberDiscountPct || 0) + tierBonus(tier, s), 0, 40);
 }
@@ -185,9 +188,9 @@ export function benefitItems(s: Settings): BenefitItem[] {
     },
     {
       key: "tier", icon: "shield", color: "var(--amber)",
-      title: "Naik tier dari akumulasi belanja",
-      value: `Silver ${rupiah(t.Silver)} · Gold ${rupiah(t.Gold)} · Platinum ${rupiah(t.Platinum)}`,
-      desc: "Tier naik otomatis saat total belanjamu melewati ambang — tidak perlu klaim apa pun.",
+      title: "Bonus diskon tiap tier",
+      value: `Bronze ${tierBonus("Bronze", s)}% · Silver ${tierBonus("Silver", s)}% · Gold ${tierBonus("Gold", s)}% · Platinum ${tierBonus("Platinum", s)}%`,
+      desc: `Bonus di atas potongan dasar, naik otomatis dari akumulasi belanja. Ambang: Silver ${rupiah(t.Silver)} · Gold ${rupiah(t.Gold)} · Platinum ${rupiah(t.Platinum)}.`,
     },
     {
       key: "point", icon: "star", color: "var(--violet)",

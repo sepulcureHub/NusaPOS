@@ -8,7 +8,6 @@ import {
   benefitItems,
   tierBonus,
   tierThresholds,
-  totalTierPct,
 } from "@/lib/member";
 import { Badge, Button, Modal } from "./ui";
 import {
@@ -37,7 +36,6 @@ export function TierLadder({ settings, dense = false }: { settings: Settings; de
     <div className={`grid gap-3 ${dense ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-4"}`}>
       {TIERS.map((tier) => {
         const bonus = tierBonus(tier, settings);
-        const total = totalTierPct(tier, settings);
         const need = thresholds[tier];
 
         return (
@@ -54,22 +52,18 @@ export function TierLadder({ settings, dense = false }: { settings: Settings; de
             </div>
 
             <p className="font-display font-bold text-2xl mt-3" style={{ color: TIER_COLOR[tier] }}>
-              {total}%
+              {bonus}%
             </p>
-            <p className="text-[10.5px] text-faint">total potongan member</p>
+            <p className="text-[10.5px] text-faint">bonus diskon tier</p>
 
             <div className="mt-3 space-y-1 text-[11px] text-mute">
               <p className="flex items-center gap-1.5">
                 <IPercent size={12} className="text-pandan" />
-                Dasar {settings.memberDiscountPct}%
-              </p>
-              <p className="flex items-center gap-1.5">
-                <IShield size={12} className="text-amber" />
-                Bonus tier {bonus}%
+                Potongan dasar {settings.memberDiscountPct}%
               </p>
               <p className="flex items-center gap-1.5 text-faint">
                 <ICalendar size={12} />
-                Ambang belanja {rupiah(need)}
+                {need > 0 ? `Ambang belanja ${rupiah(need)}` : "Tanpa minimum belanja"}
               </p>
             </div>
           </div>
@@ -139,7 +133,7 @@ export function MemberBenefitsPanel({
             <IStar size={15} className="text-amber" /> Penjelasan tier mengikuti pengaturan
           </p>
           <span className="text-[11px] text-faint ml-auto">
-            Persentase bonus tier berubah otomatis sesuai setting admin
+            Angka bonus tier sama persis dengan yang diatur admin
           </span>
         </div>
         <TierLadder settings={settings} dense={dense} />

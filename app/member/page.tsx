@@ -21,7 +21,6 @@ import {
   tierOf,
   tierProgress,
   tierThresholds,
-  totalTierPct,
 } from "@/lib/member";
 import {
   activeDiscount,
@@ -187,6 +186,7 @@ function BenefitTab() {
       memberTierSilver: DEMO_SETTINGS.memberTierSilver,
       memberTierGold: DEMO_SETTINGS.memberTierGold,
       memberTierPlatinum: DEMO_SETTINGS.memberTierPlatinum,
+      memberBonusBronze: DEMO_SETTINGS.memberBonusBronze,
       memberBonusSilver: DEMO_SETTINGS.memberBonusSilver,
       memberBonusGold: DEMO_SETTINGS.memberBonusGold,
       memberBonusPlatinum: DEMO_SETTINGS.memberBonusPlatinum,
@@ -323,7 +323,15 @@ function BenefitTab() {
                 />
               </div>
 
-              <div className="grid sm:grid-cols-3 gap-3">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <BenefitNum
+                  label="Bonus Bronze (%)"
+                  hint="Di atas potongan dasar"
+                  value={s.memberBonusBronze}
+                  min={0}
+                  max={25}
+                  onChange={(n) => set({ memberBonusBronze: n })}
+                />
                 <BenefitNum
                   label="Bonus Silver (%)"
                   hint="Di atas potongan dasar"
@@ -358,7 +366,6 @@ function BenefitTab() {
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {TIERS.map((tier) => {
                   const bonus = tierBonus(tier, s);
-                  const total = totalTierPct(tier, s);
                   const need = tierThresholds(s)[tier];
                   return (
                     <div
@@ -373,15 +380,15 @@ function BenefitTab() {
                         <IStar size={10} /> {tier}
                       </Badge>
                       <p className="font-display font-bold text-xl mt-2" style={{ color: TIER_COLOR[tier] }}>
-                        {total}%
+                        {bonus}%
                       </p>
-                      <p className="text-[10px] text-faint">total potongan</p>
+                      <p className="text-[10px] text-faint">bonus diskon tier</p>
                       <p className="text-[11px] text-mute mt-2 leading-snug">
-                        {tier === "Bronze"
-                          ? `Potongan dasar ${s.memberDiscountPct}%`
-                          : `Bonus ${bonus}% + dasar ${s.memberDiscountPct}%`}
+                        Bonus {bonus}% + dasar {s.memberDiscountPct}%
                       </p>
-                      <p className="text-[10px] text-faint mt-1">Ambang belanja {rupiah(need)}</p>
+                      <p className="text-[10px] text-faint mt-1">
+                        {need > 0 ? `Ambang belanja ${rupiah(need)}` : "Tanpa minimum belanja"}
+                      </p>
                     </div>
                   );
                 })}

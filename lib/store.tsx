@@ -563,6 +563,7 @@ function normalize(raw: Partial<AppState>): AppState {
   s.memberTierSilver = Math.max(1, Number(s.memberTierSilver) || DEMO_SETTINGS.memberTierSilver);
   s.memberTierGold = Math.max(s.memberTierSilver + 1, Number(s.memberTierGold) || DEMO_SETTINGS.memberTierGold);
   s.memberTierPlatinum = Math.max(s.memberTierGold + 1, Number(s.memberTierPlatinum) || DEMO_SETTINGS.memberTierPlatinum);
+  s.memberBonusBronze = Math.min(25, Math.max(0, Number(s.memberBonusBronze) || 0));
   s.memberBonusSilver = Math.min(25, Math.max(0, Number(s.memberBonusSilver) || 0));
   s.memberBonusGold = Math.min(25, Math.max(0, Number(s.memberBonusGold) || 0));
   s.memberBonusPlatinum = Math.min(25, Math.max(0, Number(s.memberBonusPlatinum) || 0));

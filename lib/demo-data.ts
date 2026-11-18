@@ -196,6 +196,8 @@ export const DEMO_SETTINGS: Settings = {
   memberTierSilver: 1500000,
   memberTierGold: 5000000,
   memberTierPlatinum: 15000000,
+  /* bonus diskon per tier (%) — Bronze ikut bisa diatur */
+  memberBonusBronze: 0,
   memberBonusSilver: 1,
   memberBonusGold: 3,
   memberBonusPlatinum: 5,

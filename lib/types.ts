@@ -217,6 +217,8 @@ export interface Settings {
   memberTierSilver: number;
   memberTierGold: number;
   memberTierPlatinum: number;
+  /* Bonus diskon per tier (%) — termasuk Bronze, diatur admin */
+  memberBonusBronze: number;
   memberBonusSilver: number;
   memberBonusGold: number;
   memberBonusPlatinum: number;
