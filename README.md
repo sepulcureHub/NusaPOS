@@ -277,7 +277,7 @@ Halaman `/pengaturan` (bertingkat sesuai role):
 
 Detail teknis (`lib/auth.ts`):
 
-- Permission granular via `ROLE_PERMS` +守卫 route `routeAllowed`.
+- Permission granular via `ROLE_PERMS` + route guard `routeAllowed`.
 - Setelah login: admin diarahkan ke `/`, kasir ke `/kasir`.
 - Akun admin/root **dilindungi**: tidak bisa dihapus, dinonaktifkan, atau diubah role/username-nya.
 - Akun baru yang dibuat admin **selalu ber-role kasir**.
