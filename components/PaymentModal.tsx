@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PayMethod, Settings, Transaction, TxItem } from "@/lib/types";
 import { DEMO_EDC } from "@/lib/demo-data";
-import { clamp, hashStr, rupiah } from "@/lib/format";
+import { hashStr, rupiah } from "@/lib/format";
 import { rng } from "@/lib/seed";
 import { Badge, Button, Modal, Segmented } from "./ui";
 import { Receipt } from "./Receipt";

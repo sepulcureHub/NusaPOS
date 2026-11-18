@@ -25,6 +25,11 @@ const SERIES_HUES = [
   "var(--muted)",
 ];
 
+const AREA_W = 800;
+const AREA_PAD = { l: 52, r: 16, t: 18, b: 28 } as const;
+const BARS_W = 800;
+const BARS_PAD = { l: 34, r: 12, t: 22, b: 26 } as const;
+
 const CHART_CSS = `
 .nusa-scroll{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--accent) 55%,var(--line)) transparent}
 .nusa-scroll::-webkit-scrollbar{height:9px;width:9px}
@@ -172,35 +177,33 @@ export function AreaChart({
   const [hover, setHover] = useState<number | null>(null);
   const reduce = useReducedMotion();
 
-  const W = 800;
   const H = height;
-  const P = { l: 52, r: 16, t: 18, b: 28 };
 
   const model = useMemo(() => {
     const values = data.map((d) => d.value);
     const cmpValues = (compare ?? []).map((d) => d.value);
     const max = niceCeil(Math.max(1, ...values, ...cmpValues));
-    const x = (i: number) => P.l + (i * (W - P.l - P.r)) / Math.max(1, data.length - 1);
-    const y = (v: number) => P.t + (H - P.t - P.b) * (1 - v / max);
+    const x = (i: number) => AREA_PAD.l + (i * (AREA_W - AREA_PAD.l - AREA_PAD.r)) / Math.max(1, data.length - 1);
+    const y = (v: number) => AREA_PAD.t + (H - AREA_PAD.t - AREA_PAD.b) * (1 - v / max);
     const points: [number, number][] = data.map((d, i) => [x(i), y(d.value)]);
     const line = smoothPath(points);
-    const area = points.length ? `${line} L ${x(data.length - 1)} ${H - P.b} L ${x(0)} ${H - P.b} Z` : "";
+    const area = points.length ? `${line} L ${x(data.length - 1)} ${H - AREA_PAD.b} L ${x(0)} ${H - AREA_PAD.b} Z` : "";
     const cmpLine = compare ? smoothPath(compare.map((d, i) => [x(i), y(d.value)])) : "";
     const peakIndex = values.length ? values.indexOf(Math.max(...values)) : -1;
     const total = values.reduce((a, b) => a + b, 0);
     const cmpTotal = cmpValues.reduce((a, b) => a + b, 0);
     const delta = cmpTotal > 0 ? ((total - cmpTotal) / cmpTotal) * 100 : null;
     return { max, x, y, line, area, cmpLine, peakIndex, total, delta };
-  }, [data, compare, H, P.b, P.l, P.r, P.t]);
+  }, [data, compare, H]);
 
   const every = Math.max(1, Math.ceil(data.length / 7));
 
   const scrub = (clientX: number) => {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || data.length === 0) return;
-    const px = ((clientX - rect.left) / rect.width) * W;
-    const step = (W - P.l - P.r) / Math.max(1, data.length - 1);
-    setHover(Math.min(data.length - 1, Math.max(0, Math.round((px - P.l) / step))));
+    const px = ((clientX - rect.left) / rect.width) * AREA_W;
+    const step = (AREA_W - AREA_PAD.l - AREA_PAD.r) / Math.max(1, data.length - 1);
+    setHover(Math.min(data.length - 1, Math.max(0, Math.round((px - AREA_PAD.l) / step))));
   };
 
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
@@ -268,7 +271,7 @@ export function AreaChart({
 
       <svg
         ref={ref}
-        viewBox={`0 0 ${W} ${H}`}
+        viewBox={`0 0 ${AREA_W} ${H}`}
         className="nusa-chart w-full block"
         style={{ height: "auto", touchAction: "pan-y" }}
         tabIndex={0}
@@ -305,14 +308,14 @@ export function AreaChart({
           return (
             <g key={k}>
               <line
-                x1={P.l}
-                x2={W - P.r}
+                x1={AREA_PAD.l}
+                x2={AREA_W - AREA_PAD.r}
                 y1={model.y(v)}
                 y2={model.y(v)}
                 stroke="var(--line)"
                 strokeDasharray={k === 0 ? "" : "3 6"}
               />
-              <text x={P.l - 10} y={model.y(v) + 3} textAnchor="end" fontSize="10" fill="var(--faint)" className="font-mono">
+              <text x={AREA_PAD.l - 10} y={model.y(v) + 3} textAnchor="end" fontSize="10" fill="var(--faint)" className="font-mono">
                 {compact(v)}
               </text>
             </g>
@@ -384,12 +387,12 @@ export function AreaChart({
 
         {hover !== null && (
           <g>
-            <line x1={model.x(hover)} x2={model.x(hover)} y1={P.t} y2={H - P.b} stroke="var(--line2)" strokeWidth="1.5" />
+            <line x1={model.x(hover)} x2={model.x(hover)} y1={AREA_PAD.t} y2={H - AREA_PAD.b} stroke="var(--line2)" strokeWidth="1.5" />
             <rect
               x={model.x(hover) - 1}
-              y={P.t}
+              y={AREA_PAD.t}
               width="2"
-              height={H - P.t - P.b}
+              height={H - AREA_PAD.t - AREA_PAD.b}
               fill={color}
               opacity=".18"
             />
@@ -426,7 +429,7 @@ export function AreaChart({
         <div
           className="chart-tip"
           style={{
-            left: `clamp(96px, ${(model.x(hover) / W) * 100}%, calc(100% - 96px))`,
+            left: `clamp(96px, ${(model.x(hover) / AREA_W) * 100}%, calc(100% - 96px))`,
             top: `${(model.y(active.value) / H) * 100}%`,
             pointerEvents: "none",
           }}
@@ -701,27 +704,25 @@ export function Bars({
   const [hover, setHover] = useState<number | null>(null);
   const reduce = useReducedMotion();
 
-  const W = 800;
   const H = height;
-  const P = { l: 34, r: 12, t: 22, b: 26 };
 
   const model = useMemo(() => {
     const values = data.map((d) => d.value);
     const max = niceCeil(Math.max(1, ...values));
-    const step = data.length ? (W - P.l - P.r) / data.length : 0;
+    const step = data.length ? (BARS_W - BARS_PAD.l - BARS_PAD.r) / data.length : 0;
     const bw = step * 0.58;
-    const y = (v: number) => P.t + (H - P.t - P.b) * (1 - v / max);
+    const y = (v: number) => BARS_PAD.t + (H - BARS_PAD.t - BARS_PAD.b) * (1 - v / max);
     const total = values.reduce((a, b) => a + b, 0);
     const avg = values.length ? total / values.length : 0;
     const peakIndex = values.length ? values.indexOf(Math.max(...values)) : -1;
     return { max, step, bw, y, total, avg, peakIndex };
-  }, [data, H, P.b, P.l, P.r, P.t]);
+  }, [data, H]);
 
   const scrub = (clientX: number) => {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || !data.length) return;
-    const px = ((clientX - rect.left) / rect.width) * W;
-    const i = Math.floor((px - P.l) / model.step);
+    const px = ((clientX - rect.left) / rect.width) * BARS_W;
+    const i = Math.floor((px - BARS_PAD.l) / model.step);
     setHover(i >= 0 && i < data.length ? i : null);
   };
 
@@ -768,7 +769,7 @@ export function Bars({
 
       <svg
         ref={ref}
-        viewBox={`0 0 ${W} ${H}`}
+        viewBox={`0 0 ${BARS_W} ${H}`}
         className="nusa-chart w-full block"
         style={{ touchAction: "pan-y" }}
         tabIndex={0}
@@ -796,14 +797,14 @@ export function Bars({
           return (
             <g key={k}>
               <line
-                x1={P.l}
-                x2={W - P.r}
+                x1={BARS_PAD.l}
+                x2={BARS_W - BARS_PAD.r}
                 y1={model.y(v)}
                 y2={model.y(v)}
                 stroke="var(--line)"
                 strokeDasharray={k === 0 ? "" : "3 6"}
               />
-              <text x={P.l - 8} y={model.y(v) + 3} textAnchor="end" fontSize="10" fill="var(--faint)" className="font-mono">
+              <text x={BARS_PAD.l - 8} y={model.y(v) + 3} textAnchor="end" fontSize="10" fill="var(--faint)" className="font-mono">
                 {compact(v)}
               </text>
             </g>
@@ -813,8 +814,8 @@ export function Bars({
         {model.avg > 0 && (
           <g>
             <line
-              x1={P.l}
-              x2={W - P.r}
+              x1={BARS_PAD.l}
+              x2={BARS_W - BARS_PAD.r}
               y1={model.y(model.avg)}
               y2={model.y(model.avg)}
               stroke="var(--amber)"
@@ -822,26 +823,26 @@ export function Bars({
               strokeDasharray="6 5"
               opacity=".8"
             />
-            <text x={W - P.r} y={model.y(model.avg) - 5} textAnchor="end" fontSize="9" fontWeight="700" fill="var(--amber)">
+            <text x={BARS_W - BARS_PAD.r} y={model.y(model.avg) - 5} textAnchor="end" fontSize="9" fontWeight="700" fill="var(--amber)">
               rata-rata
             </text>
           </g>
         )}
 
         {data.map((d, i) => {
-          const bx = P.l + i * model.step + (model.step - model.bw) / 2;
-          const bh = Math.max(0, H - P.b - model.y(d.value));
+          const bx = BARS_PAD.l + i * model.step + (model.step - model.bw) / 2;
+          const bh = Math.max(0, H - BARS_PAD.b - model.y(d.value));
           const isActive = hover === i;
           const isPeak = i === model.peakIndex && d.value > 0;
           return (
             <g key={`${d.label}-${i}`} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-              <rect x={P.l + i * model.step} y={P.t} width={model.step} height={H - P.t - P.b} fill="transparent" />
+              <rect x={BARS_PAD.l + i * model.step} y={BARS_PAD.t} width={model.step} height={H - BARS_PAD.t - BARS_PAD.b} fill="transparent" />
               {isActive && (
                 <rect
-                  x={P.l + i * model.step + 1}
-                  y={P.t}
+                  x={BARS_PAD.l + i * model.step + 1}
+                  y={BARS_PAD.t}
                   width={model.step - 2}
-                  height={H - P.t - P.b}
+                  height={H - BARS_PAD.t - BARS_PAD.b}
                   rx="6"
                   fill="var(--amber)"
                   opacity=".08"
@@ -896,7 +897,7 @@ export function Bars({
         <div
           className="chart-tip"
           style={{
-            left: `clamp(100px, ${((P.l + hover * model.step + model.step / 2) / W) * 100}%, calc(100% - 100px))`,
+            left: `clamp(100px, ${((BARS_PAD.l + hover * model.step + model.step / 2) / BARS_W) * 100}%, calc(100% - 100px))`,
             top: `${(model.y(active.value) / H) * 100}%`,
             pointerEvents: "none",
           }}
@@ -951,7 +952,7 @@ export function Heatmap({ matrix }: { matrix: number[][] }) {
     const busiestDay = rowTotals.length ? rowTotals.indexOf(Math.max(...rowTotals)) : 0;
     const busiestHour = colTotals.length ? colTotals.indexOf(Math.max(...colTotals)) : 0;
     return { rows, max, rowTotals, colTotals, total, peak, busiestDay, busiestHour };
-  }, [matrix, cols]);
+  }, [matrix]);
 
   const shown = cell ?? { r: model.peak.r, c: model.peak.c };
   const shownValue = model.rows[shown.r]?.[shown.c] ?? 0;

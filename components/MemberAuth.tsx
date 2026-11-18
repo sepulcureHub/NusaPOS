@@ -34,7 +34,7 @@ export function MemberLoginForm({
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [saved, setSaved] = useState<SavedMemberLogin[]>([]);
 
   useEffect(() => {

@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useStore } from "@/lib/store";
 import { setSoundEnabled, sfx } from "@/lib/sound";
 import { applyTheme, resolveTheme } from "@/lib/brand";
-import { DEMO_SHIFT_SPLIT, OPERATING_HOURS, STORE_CLOSE } from "@/lib/demo-data";
+import { DEMO_SHIFT_SPLIT, OPERATING_HOURS } from "@/lib/demo-data";
 import { hashPassword, homeFor, roleLabel, routeAllowed, shiftEligible, verifyPassword } from "@/lib/auth";
 import type { Perm } from "@/lib/auth";
 import type { Product, Transaction } from "@/lib/types";
@@ -36,7 +36,7 @@ const NAV: { href: string; label: string; icon: typeof IGrid; perm: Perm | null 
   { href: "/produk", label: "Produk", icon: IBox, perm: "products.view" },
   { href: "/transaksi", label: "Transaksi", icon: IReceipt, perm: "tx.view" },
   { href: "/analitik", label: "Analitik", icon: IChart, perm: "analytics" },
-  { href: "/notifikasi", label: "Notifikasi", icon: IBell, perm: null },
+  { href: "/notifikasi", label: "Notifikasi", icon: IBell, perm: "notif.view" },
   { href: "/pengaturan", label: "Pengaturan", icon: IGear, perm: "settings.self" },
 ];
 
@@ -503,7 +503,7 @@ function SidebarContent({ onNavigate, onPassword }: { onNavigate?: () => void; o
 }
 
 function AccessDenied({ path }: { path: string }) {
-  const { role, can } = useAuth();
+  const { can } = useAuth();
   const router = useRouter();
   return (
     <div className="card p-10 text-center max-w-lg mx-auto mt-8 rise">

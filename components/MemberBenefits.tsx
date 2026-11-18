@@ -30,7 +30,7 @@ const BENEFIT_ICON = {
 } as const;
 
 /** Kartu tier premium — angka bonus persis sesuai pengaturan admin. */
-export function TierLadder({ settings, dense = false }: { settings: Settings; dense?: boolean }) {
+export function TierLadder({ settings, dense: _dense = false }: { settings: Settings; dense?: boolean }) {
   const thresholds = tierThresholds(settings);
 
   return (

@@ -21,7 +21,7 @@ export interface GeocodeFail {
 
 export type GeocodeResponse = GeocodeOk | GeocodeFail;
 
-const UA = "NusaPOS/1.7 (store locator; +https://nusapos.local)";
+const UA = "NusaPOS/1.1 (store locator; +https://github.com/sepulcureHub/NusaPOS; contact: sayahafizh1314@gmail.com)";
 const TTL = 1000 * 60 * 60 * 24;
 const BUDGET_MS = 8000;
 const MAX_CACHE = 500;

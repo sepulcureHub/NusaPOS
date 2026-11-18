@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth, useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
@@ -584,6 +584,14 @@ function TableFormModal({ open, edit, onClose }: { open: boolean; edit: DiningTa
   const [seats, setSeats] = useState("2");
   const [err, setErr] = useState("");
 
+  /* Denah terbaru disimpan di ref, bukan jadi dependency form.
+     Kalau state.tables ikut jadi dependency, sinkron antar tab (kasir lain
+     mengisi meja) akan mereset form yang sedang diisi admin. */
+  const tablesRef = useRef(state.tables);
+  useEffect(() => {
+    tablesRef.current = state.tables;
+  }, [state.tables]);
+
   useEffect(() => {
     if (!open) return;
     if (edit) {
@@ -592,7 +600,7 @@ function TableFormModal({ open, edit, onClose }: { open: boolean; edit: DiningTa
       setSeats(String(edit.seats));
     } else {
       setArea(DEFAULT_AREAS[0]);
-      setLabel(nextTableLabel(state.tables, DEFAULT_AREAS[0]));
+      setLabel(nextTableLabel(tablesRef.current, DEFAULT_AREAS[0]));
       setSeats("2");
     }
     setErr("");

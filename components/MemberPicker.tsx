@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { Customer } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { sfx } from "@/lib/sound";
-import { num, rupiah } from "@/lib/format";
+import { num } from "@/lib/format";
 import { TIER_COLOR, initials, memberDiscountPct, normalizePhone, tierOf } from "@/lib/member";
 import { Badge, Button, Drawer, EmptyState } from "./ui";
 import { SearchField } from "./SearchField";

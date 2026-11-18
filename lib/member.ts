@@ -96,6 +96,15 @@ export function makeMemberUsername(source: string, fallback: string, existing: C
 }
 
 export function makePin() {
+  const c = globalThis.crypto;
+  if (c?.getRandomValues) {
+    const SPAN = 900000;
+    const LIMIT = 0x100000000 - (0x100000000 % SPAN);
+    const buf = new Uint32Array(1);
+    let x = 0;
+    do { c.getRandomValues(buf); x = buf[0]!; } while (x >= LIMIT);
+    return String(100000 + (x % SPAN));
+  }
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 

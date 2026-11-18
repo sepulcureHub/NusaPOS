@@ -18,7 +18,7 @@ import { AreaChart, Bars, HBarList, PaymentSplit } from "@/components/charts";
 import { Badge, Button, Confirm, EmptyState, Field, IconBtn, Input, Modal, PageSkel, Segmented, Select, Textarea, Toggle } from "@/components/ui";
 import {
   IAlert, ICalendar, IChart, ICheck, ICheckCircle, IClock, IDownload, IHeart, IInfo, IPen,
-  IPlay, IPlus, IRefresh, IShield, IStar, IStop, ITrash, IUsers, IX,
+  IPlay, IPlus, IRefresh, IShield, IStar, IStop, IUsers, IX,
 } from "@/components/icons";
 
 type Tab = "jadwal" | "performa" | "shift";
