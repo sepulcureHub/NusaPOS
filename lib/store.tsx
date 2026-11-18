@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useReducer } from "react";
+import { createContext, useContext, useEffect, useReducer, useRef } from "react";
 import type { ReactNode } from "react";
 import type {
   AppNotification, AppState, Customer, DayPromo, DemoData, DiningTable, Discount, HeldOrder, NotifKind,
@@ -23,8 +23,26 @@ import type { Perm } from "./auth";
 const KEY = "nusapos:v1";
 const MAX_NOTIFS = 300;
 
+/* Identitas tab ini + jam logis (ms) untuk sinkron antar tab. */
+const TAB_ID = uid();
+const PERSIST_DEBOUNCE = 250;
+
+interface Envelope { v: 1; rev: number; writer: string; state: AppState }
+
+function parseEnvelope(text: string | null): Envelope | null {
+  if (!text) return null;
+  try {
+    const p = JSON.parse(text);
+    if (p?.v !== 1 || !p.state) return null;
+    return { v: 1, rev: Number(p.rev) || 0, writer: String(p.writer ?? ""), state: p.state };
+  } catch {
+    return null;
+  }
+}
+
 export type Action =
   | { type: "HYDRATE"; state: AppState }
+  | { type: "SYNC_REMOTE"; state: AppState }
   | { type: "RESET"; data: DemoData }
   | { type: "WIPE_DEMO" }
   | { type: "ADD_PRODUCT"; product: Product }
@@ -134,6 +152,13 @@ function emptyDemo(settings: Settings, tables: DiningTable[]): DemoData {
 function core(state: AppState, a: Action): AppState {
   switch (a.type) {
     case "HYDRATE": return a.state;
+    /* Sinkron dari tab lain: data ikut, sesi login tab ini TIDAK ditimpa. */
+    case "SYNC_REMOTE": return {
+      ...a.state,
+      session: state.session,
+      memberSession: state.memberSession,
+      hydrated: true,
+    };
     case "RESET": return { ...a.data, users: state.users, session: state.session, memberSession: null, hydrated: true };
     case "WIPE_DEMO": return { ...state, ...emptyDemo(state.settings, state.tables), hydrated: true };
 
@@ -189,10 +214,17 @@ function core(state: AppState, a: Action): AppState {
       const tx = state.transactions.find((t) => t.id === a.id);
       if (!tx || tx.status === a.status) return state;
       let tables = state.tables;
-      if (a.status === "Refund" && tx.tableId) {
-        tables = state.tables.map((t) => (t.id === tx.tableId && t.txId === tx.id
-          ? { ...t, status: "kosong" as const, txId: null, customerName: null, occupiedAt: null }
-          : t));
+      if (tx.tableId) {
+        if (a.status === "Refund") {
+          tables = state.tables.map((t) => (t.id === tx.tableId && t.txId === tx.id
+            ? { ...t, status: "kosong" as const, txId: null, customerName: null, occupiedAt: null }
+            : t));
+        } else if (tx.orderType === "dinein") {
+          /* Batalkan refund → meja diisi lagi, HANYA kalau masih kosong & aktif. */
+          tables = state.tables.map((t) => (t.id === tx.tableId && t.active && t.status === "kosong"
+            ? { ...t, status: "terisi" as const, txId: tx.id, customerName: tx.customerName, occupiedAt: tx.ts }
+            : t));
+        }
       }
       return {
         ...state,
@@ -587,8 +619,10 @@ function normalizeCustomers(raw: Customer[] | undefined): Customer[] {
   });
 }
 
-function normalizeTables(raw: DiningTable[] | undefined): DiningTable[] {
-  const list = Array.isArray(raw) && raw.length ? raw : DEMO_TABLES.map((t) => ({ ...t }));
+export function normalizeTables(raw: DiningTable[] | undefined): DiningTable[] {
+  /* undefined / bukan array = data lama (pra-meja) → baru seed meja demo.
+     Array kosong = admin memang menghapus semua meja → hormati, jangan dibangkitkan. */
+  const list = Array.isArray(raw) ? raw : DEMO_TABLES.map((t) => ({ ...t }));
   return list.map((t) => ({
     id: t.id || uid(),
     label: String(t.label || "Meja"),
@@ -603,9 +637,20 @@ function normalizeTables(raw: DiningTable[] | undefined): DiningTable[] {
   }));
 }
 
+/* Meja "terisi" wajib punya transaksi dine-in yang masih Selesai.
+   Kalau tidak (di-refund / data demo dihapus) → kosongkan. */
+function reconcileTables(tables: DiningTable[], txs: Transaction[]): DiningTable[] {
+  const live = new Set(txs.filter((t) => t.status === "Selesai" && !!t.tableId).map((t) => t.id));
+  return tables.map((t) => {
+    if (t.status !== "terisi") return t;
+    if (t.txId && live.has(t.txId)) return t;
+    return { ...t, status: "kosong" as const, txId: null, customerName: null, occupiedAt: null };
+  });
+}
+
 const LEGACY_ACCENT: Record<string, Settings["accent"]> = { amber: "ungu", magenta: "lembayung" };
 
-function normalize(raw: Partial<AppState>): AppState {
+export function normalize(raw: Partial<AppState>): AppState {
   const s: Settings = { ...DEMO_SETTINGS, ...(raw.settings ?? {}) };
   if (!["dark", "light", "system"].includes(s.theme)) s.theme = "dark";
   if (!ACCENT_VALUES.includes(s.accent)) s.accent = LEGACY_ACCENT[s.accent as string] ?? "tosca";
@@ -694,7 +739,7 @@ function normalize(raw: Partial<AppState>): AppState {
     rewards, redemptions, notifications,
     notifReadAt: Number(raw.notifReadAt) || 0,
     memberSession,
-    tables: normalizeTables(raw.tables),
+    tables: reconcileTables(normalizeTables(raw.tables), transactions),
   };
 }
 
@@ -702,20 +747,19 @@ const Ctx = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } 
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initial);
+  const revRef = useRef(0);
+  const skipWriteRef = useRef(false);
+  const quotaWarnedRef = useRef(false);
 
+  /* 1. Hydrate dari localStorage (atau seed demo saat pertama kali dibuka). */
   useEffect(() => {
-    let loaded: Partial<AppState> | null = null;
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const p = JSON.parse(raw);
-        if (p?.v === 1 && p.state) loaded = p.state;
-      }
-    } catch { /* abaikan */ }
-    const next = loaded ? normalize(loaded) : { ...buildSeed(DEMO_SEED), hydrated: true };
+    const env = parseEnvelope(localStorage.getItem(KEY));
+    revRef.current = env?.rev ?? 0;
+    const next = env ? normalize(env.state) : { ...buildSeed(DEMO_SEED), hydrated: true };
     dispatch({ type: "HYDRATE", state: next });
   }, []);
 
+  /* 2. Auto-close shift tiap 15 detik + saat tab kembali visible. */
   useEffect(() => {
     if (!state.hydrated) return;
     const tick = () => dispatch({ type: "AUTO_CLOSE_SHIFTS", now: Date.now() });
@@ -726,13 +770,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, [state.hydrated]);
 
+  /* 3. Persist debounce + jam logis & ID tab supaya tab lain bisa membandingkan. */
   useEffect(() => {
     if (!state.hydrated) return;
+    if (skipWriteRef.current) { skipWriteRef.current = false; return; } // jangan gema-kan state tab lain
     const t = setTimeout(() => {
-      try { localStorage.setItem(KEY, JSON.stringify({ v: 1, state: { ...state, hydrated: false } })); } catch { /* penuh */ }
-    }, 250);
+      const rev = Math.max(Date.now(), revRef.current + 1);
+      try {
+        localStorage.setItem(KEY, JSON.stringify({ v: 1, rev, writer: TAB_ID, state: { ...state, hydrated: false } }));
+        revRef.current = rev;
+      } catch (e) {
+        if (!quotaWarnedRef.current) {
+          quotaWarnedRef.current = true;
+          console.warn(
+            "[NusaPOS] Gagal menyimpan ke localStorage — kuota ±5MB penuh. " +
+            "Kurangi/hapus foto produk, atau ekspor backup JSON lalu hapus data demo.", e
+          );
+        }
+      }
+    }, PERSIST_DEBOUNCE);
     return () => clearTimeout(t);
   }, [state]);
+
+  /* 4. Sinkron antar tab di browser yang sama (event `storage` hanya menembak tab lain). */
+  useEffect(() => {
+    if (!state.hydrated) return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== KEY) return;
+      const env = parseEnvelope(e.newValue);
+      if (!env || env.writer === TAB_ID) return;
+      /* Terima kalau lebih baru; kalau seri (ms sama) menangkan writer terbesar
+         supaya kedua tab konvergen, bukan saling timpa. */
+      const newer = env.rev > revRef.current || (env.rev === revRef.current && env.writer > TAB_ID);
+      if (!newer) return;
+      revRef.current = env.rev;
+      skipWriteRef.current = true;
+      dispatch({ type: "SYNC_REMOTE", state: normalize(env.state) });
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [state.hydrated]);
 
   return <Ctx.Provider value={{ state, dispatch }}>{children}</Ctx.Provider>;
 }

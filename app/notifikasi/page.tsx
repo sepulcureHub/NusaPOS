@@ -61,8 +61,6 @@ export default function NotifikasiPage() {
     );
   }, [state.notifications, q, kind, range]);
 
-  if (!state.hydrated) return <PageSkel />;
-
   const counts = useMemo(() => {
     const m = new Map<NotifKind, number>();
     state.notifications.forEach((n) => m.set(n.kind, (m.get(n.kind) ?? 0) + 1));
@@ -79,6 +77,9 @@ export default function NotifikasiPage() {
     });
     return [...groups.entries()];
   };
+
+  /* Guard SETELAH semua hook — Rules of Hooks. */
+  if (!state.hydrated) return <PageSkel />;
 
   return (
     <div className="space-y-5">

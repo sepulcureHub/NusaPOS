@@ -42,7 +42,7 @@ export async function processProductPhoto(file: File, aspect: PhotoAspect = "squ
 
     const square = aspect === "square";
     const basis = square ? Math.min(nw, nh) : Math.max(nw, nh);
-    let side = Math.min(PHOTO_LIMITS.maxSide, basis);
+    const side = Math.min(PHOTO_LIMITS.maxSide, basis);
     let w = square ? side : Math.max(1, Math.round(nw * (side / basis)));
     let h = square ? side : Math.max(1, Math.round(nh * (side / basis)));
 

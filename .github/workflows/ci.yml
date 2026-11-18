@@ -10,33 +10,40 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  quality:
-    name: Lint, typecheck & build
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      # WAJIB terpisah: Next.js 16 tidak lagi lint saat build.
-      - name: Lint
+      - run: npm ci
+      - name: ESLint (error memblokir, warning terlihat di log)
         run: npm run lint
 
-      # next build tetap menjalankan type-check.
-      - name: Build
+  verify:
+    name: Build, typecheck & unit test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Next.js 16 tidak lagi lint saat build, dan build yang menghasilkan
+      # next-env.d.ts + route types — jadi build dulu, typecheck sesudahnya.
+      - name: Build produksi
         run: npm run build
-
-      # Typecheck eksplisit setelah build (next-env.d.ts & route types sudah dibuat).
-      - name: Typecheck
+      - name: Typecheck (strict)
         run: npm run typecheck
+      - name: Unit test
+        run: npm run test

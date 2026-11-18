@@ -78,11 +78,15 @@ export function download(name: string, content: string, type = "text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
+/** Sel teks yang diawali = + - @ TAB/CR bisa dieksekusi Excel/Sheets → netralkan. */
+const CSV_RISKY = /^[=+\-@\t\r]/;
+
 export function toCSV(rows: (string | number)[][]) {
   return "\uFEFF" + rows
     .map((r) => r.map((c) => {
-      const s = String(c);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      let s = String(c ?? "");
+      if (typeof c !== "number" && CSV_RISKY.test(s)) s = `'${s}`;
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(","))
     .join("\r\n");
 }

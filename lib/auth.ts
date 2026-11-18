@@ -27,6 +27,7 @@ export type Perm =
   | "tx.view" | "tx.all" | "tx.refund" | "tx.export"
   | "members.view" | "members.manage" | "members.delete" | "members.points"
   | "analytics"
+  | "notif.view"
   | "shift.view" | "shift.manage"
   | "settings.self" | "settings.store" | "settings.users" | "data.manage";
 
@@ -36,7 +37,7 @@ export const ROLE_PERMS: Record<Role, Perm[]> = {
     "dashboard", "pos", "products.view", "products.manage",
     "tx.view", "tx.all", "tx.refund", "tx.export",
     "members.view", "members.manage", "members.delete", "members.points",
-    "analytics", "shift.view", "shift.manage",
+    "analytics", "notif.view", "shift.view", "shift.manage",
     "settings.self", "settings.store", "settings.users", "data.manage",
   ],
   kasir: [
@@ -63,6 +64,7 @@ export const PERM_LABELS: { perm: Perm; label: string }[] = [
   { perm: "products.manage", label: "Tambah / edit / hapus produk & paket" },
   { perm: "dashboard", label: "Dashboard bisnis" },
   { perm: "analytics", label: "Analitik & insight penjualan" },
+  { perm: "notif.view", label: "Log aktivitas seluruh sistem" },
   { perm: "shift.manage", label: "Jadwal shift semua kasir + buka/tutup paksa" },
   { perm: "settings.self", label: "Tema, suara & password sendiri" },
   { perm: "settings.store", label: "Pengaturan toko, pajak, brand, program member" },
@@ -93,18 +95,24 @@ export function homeFor(role: Role) {
 
 export const ROUTE_PERM: { href: string; perm: Perm | null }[] = [
   { href: "/kasir", perm: "pos" },
+  { href: "/memberku", perm: null },   // portal member publik — harus sebelum /member
   { href: "/member", perm: "members.view" },
   { href: "/shift", perm: "shift.view" },
   { href: "/produk", perm: "products.view" },
   { href: "/transaksi", perm: "tx.view" },
   { href: "/analitik", perm: "analytics" },
+  { href: "/notifikasi", perm: "notif.view" },
   { href: "/pengaturan", perm: "settings.self" },
   { href: "/beranda", perm: null },
+  { href: "/login", perm: null },
   { href: "/", perm: "dashboard" },
 ];
 
+/** Cocokkan per segmen path, bukan startsWith mentah ("/memberku" ≠ "/member"). */
 export function routeAllowed(pathname: string, role: Role) {
-  const match = ROUTE_PERM.find((r) => (r.href === "/" ? pathname === "/" : pathname.startsWith(r.href)));
+  const match = ROUTE_PERM.find((r) =>
+    r.href === "/" ? pathname === "/" : pathname === r.href || pathname.startsWith(`${r.href}/`)
+  );
   if (!match || match.perm === null) return true;
   return can(role, match.perm);
 }

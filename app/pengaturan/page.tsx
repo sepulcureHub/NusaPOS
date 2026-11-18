@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAuth, useStore } from "@/lib/store";
+import { normalize, useAuth, useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { buildSeed } from "@/lib/seed";
-import { DEMO_SETTINGS } from "@/lib/demo-data";
 import { setSoundEnabled, sfx } from "@/lib/sound";
-import type { Accent, LogoShape, Settings, ThemeMode, User } from "@/lib/types";
-import { clamp, dateID, download, uid } from "@/lib/format";
+import type { Accent, AppState, LogoShape, MemberTier, Settings, ThemeMode, User } from "@/lib/types";
+import { clamp, dateID, download, num, rupiah, uid } from "@/lib/format";
 import {
   ACCENTS,
   LOGO_LIMITS,
@@ -25,13 +24,16 @@ import { BrandLockup } from "@/components/Brand";
 import {
   IAlert,
   ICheckCircle,
+  IClock,
   IDatabase,
   IDownload,
   IImage,
+  IInfo,
   IKey,
   IMonitor,
   IMoon,
   IPalette,
+  IReceipt,
   IRefresh,
   IShield,
   IStar,
@@ -45,6 +47,54 @@ import {
 } from "@/components/icons";
 
 const THEME_ICON: Record<ThemeMode, typeof ISun> = { dark: IMoon, light: ISun, system: IMonitor };
+
+/** Kuota localStorage yang realistis di browser modern (±5 MB). */
+const STORAGE_QUOTA_KB = 5120;
+const MAX_BACKUP_BYTES = 16 * 1024 * 1024;
+
+const TIERS: MemberTier[] = ["Bronze", "Silver", "Gold", "Platinum"];
+const TIER_COLOR: Record<MemberTier, string> = {
+  Bronze: "var(--amber)",
+  Silver: "var(--muted)",
+  Gold: "var(--amber)",
+  Platinum: "var(--violet)",
+};
+
+function tierBonusOf(tier: MemberTier, s: Settings) {
+  if (tier === "Bronze") return clamp(s.memberBonusBronze || 0, 0, 25);
+  if (tier === "Silver") return clamp(s.memberBonusSilver || 0, 0, 25);
+  if (tier === "Gold") return clamp(s.memberBonusGold || 0, 0, 25);
+  return clamp(s.memberBonusPlatinum || 0, 0, 25);
+}
+
+function initialsOf(name: string) {
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?"
+  );
+}
+
+/** Skor kekuatan password 0–4, murni untuk indikator visual. */
+function passwordScore(pw: string) {
+  if (!pw) return { score: 0, label: "Belum diisi", color: "var(--faint)" };
+  let score = 0;
+  if (pw.length >= 6) score++;
+  if (pw.length >= 10) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw) && /[^\w\s]/.test(pw)) score++;
+  const map = [
+    { label: "Lemah", color: "var(--chili)" },
+    { label: "Cukup", color: "var(--amber)" },
+    { label: "Baik", color: "var(--laut)" },
+    { label: "Kuat", color: "var(--pandan)" },
+    { label: "Sangat kuat", color: "var(--pandan)" },
+  ];
+  return { score, ...map[score] };
+}
 
 export default function Pengaturan() {
   const { state, dispatch } = useStore();
@@ -60,6 +110,11 @@ export default function Pengaturan() {
   const [logoInfo, setLogoInfo] = useState<LogoResult | null>(null);
   const [userForm, setUserForm] = useState<{ open: boolean; edit: User | null }>({ open: false, edit: null });
   const [delUser, setDelUser] = useState<User | null>(null);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [userQuery, setUserQuery] = useState("");
+  const [preview, setPreview] = useState<{ next: AppState; name: string } | null>(null);
+  const [simAmount, setSimAmount] = useState(100000);
+  const [simTier, setSimTier] = useState<MemberTier>("Gold");
   const fileRef = useRef<HTMLInputElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
 
@@ -72,6 +127,25 @@ export default function Pengaturan() {
     }
   }, [state]);
 
+  const storage = useMemo(() => {
+    const pct = clamp((sizeKB / STORAGE_QUOTA_KB) * 100, 0, 100);
+    const tone = pct >= 85 ? "var(--chili)" : pct >= 60 ? "var(--amber)" : "var(--pandan)";
+    const note =
+      pct >= 85
+        ? "Hampir penuh — hapus foto produk lama atau ekspor lalu bersihkan data demo."
+        : pct >= 60
+          ? "Mulai padat. Foto beresolusi besar cepat memenuhi kuota."
+          : "Ruang penyimpanan masih lega.";
+    return { pct, tone, note };
+  }, [sizeKB]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userQuery.trim().toLowerCase();
+    if (!q) return state.users;
+    return state.users.filter((u) => u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q));
+  }, [state.users, userQuery]);
+
+  /* Semua hook di atas guard — urutan hook wajib stabil di setiap render. */
   if (!state.hydrated) return <PageSkel />;
 
   const s = state.settings;
@@ -86,9 +160,9 @@ export default function Pengaturan() {
     push({ msg: `Tema: ${THEME_OPTIONS.find((t) => t.v === mode)?.label}`, type: "ok", dur: 2000 });
   };
 
+  /* Aksen diterapkan oleh effect di Shell (satu sumber kebenaran: state.settings.accent). */
   const pickAccent = (v: Accent) => {
     set({ accent: v });
-    document.documentElement.dataset.accent = v;
     sfx.tap();
   };
 
@@ -116,38 +190,65 @@ export default function Pengaturan() {
       JSON.stringify({ v: 1, state: { ...state, hydrated: false } }, null, 2),
       "application/json"
     );
+    sfx.success();
     push({ msg: "Backup JSON diunduh", type: "ok" });
   };
 
-  const importJSON = (file: File) => {
+  /**
+   * Impor backup lewat satu pintu validasi: normalize() — fungsi yang sama
+   * dengan StoreProvider. Akun & sesi yang sedang aktif tetap dipertahankan.
+   * Hasilnya ditinjau dulu sebelum diterapkan, dan bisa diurungkan.
+   */
+  const readBackup = (file: File) => {
+    if (file.size > MAX_BACKUP_BYTES) {
+      sfx.error();
+      push({ msg: `File terlalu besar — maksimal ${formatBytes(MAX_BACKUP_BYTES)}`, type: "err" });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const p = JSON.parse(String(reader.result));
-        if (p?.v === 1 && p.state) {
-          const merged: Settings = { ...DEMO_SETTINGS, ...(p.state.settings ?? {}) };
-          dispatch({
-            type: "HYDRATE",
-            state: {
-              ...state,
-              ...p.state,
-              settings: merged,
-              users: state.users,
-              session: state.session,
-              memberSession: state.memberSession,
-              hydrated: true,
-            },
-          });
-          applyTheme(merged.theme);
-          sfx.success();
-          push({ msg: "Backup dipulihkan · akun terdaftar tetap dipakai", type: "ok" });
-        } else throw new Error("format");
+        if (p?.v !== 1 || !p.state || typeof p.state !== "object") throw new Error("format");
+        const restored = normalize({
+          ...p.state,
+          users: state.users,
+          session: state.session,
+          memberSession: state.memberSession,
+        });
+        setPreview({ next: restored, name: file.name });
+        sfx.tap();
       } catch {
         sfx.error();
-        push({ msg: "File backup tidak valid", type: "err" });
+        push({ msg: "File backup tidak valid — pastikan hasil ekspor NusaPOS (format { v: 1, state })", type: "err" });
       }
     };
+    reader.onerror = () => {
+      sfx.error();
+      push({ msg: "File tidak bisa dibaca", type: "err" });
+    };
     reader.readAsText(file);
+  };
+
+  const applyBackup = () => {
+    if (!preview) return;
+    const snapshot = state;
+    const next = preview.next;
+    dispatch({ type: "HYDRATE", state: next });
+    applyTheme(next.settings.theme);
+    setPreview(null);
+    sfx.success();
+    push({
+      msg: `Backup dipulihkan & divalidasi · ${next.products.length} produk · ${next.transactions.length} transaksi · ${next.tables.length} meja`,
+      type: "ok",
+      dur: 9000,
+      actionLabel: "Urungkan",
+      onAction: () => {
+        dispatch({ type: "HYDRATE", state: { ...snapshot, hydrated: true } });
+        applyTheme(snapshot.settings.theme);
+        sfx.success();
+      },
+    });
   };
 
   const reseed = () => {
@@ -186,10 +287,20 @@ export default function Pengaturan() {
     push({
       msg: `Akun ${u.name} dihapus`,
       type: "info",
+      dur: 9000,
       actionLabel: "Urungkan",
       onAction: () => dispatch({ type: "ADD_USER", user: u }),
     });
   };
+
+  /* Simulasi harga: rumus identik dengan calcTotals() di kasir. */
+  const simPct = clamp(s.memberDiscountPct + tierBonusOf(simTier, s), 0, 40);
+  const simMember = Math.round((simAmount * simPct) / 100);
+  const simBase = simAmount - simMember;
+  const simTax = Math.round((simBase * s.taxPct) / 100);
+  const simService = Math.round((simBase * s.servicePct) / 100);
+  const simTotal = simBase + simTax + simService;
+  const simPoints = s.memberEnabled ? Math.floor(simTotal / Math.max(100, s.memberPointRate)) : 0;
 
   return (
     <div className="space-y-6">
@@ -202,12 +313,15 @@ export default function Pengaturan() {
               : "Preferensi tampilan, keamanan akun, dan ringkasan hak akses."}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge color={role === "admin" ? "var(--accent)" : "var(--amber)"}>
             {role === "admin" ? <IShield size={11} /> : <IUsers size={11} />} {roleLabel(role)}
           </Badge>
           <Badge color="var(--pandan)">
             <ICheckCircle size={12} /> Tersimpan otomatis
+          </Badge>
+          <Badge color="var(--laut)">
+            <IRefresh size={11} /> Sinkron antar tab
           </Badge>
         </div>
       </div>
@@ -230,6 +344,8 @@ export default function Pengaturan() {
             return (
               <button
                 key={t.v}
+                type="button"
+                aria-pressed={active}
                 onClick={() => pickTheme(t.v)}
                 className={`rounded-2xl border p-4 text-left transition-all ${
                   active ? "border-accent ring-2 ring-accent-soft" : "border-line hover:border-line2"
@@ -267,7 +383,7 @@ export default function Pengaturan() {
             <Badge color="var(--violet)">
               <IStar size={10} /> Tosca Laut
             </Badge>
-            <span className="text-[10.5px] text-faint ml-auto">Hanya satu aksen resmi aplikasi</span>
+            <span className="text-[10.5px] text-faint ml-auto">Perubahan langsung dipakai seluruh halaman</span>
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
@@ -277,6 +393,8 @@ export default function Pengaturan() {
               return (
                 <button
                   key={a.v}
+                  type="button"
+                  aria-pressed={active}
                   onClick={() => pickAccent(a.v)}
                   className={`rounded-2xl border p-3.5 text-left transition-all relative overflow-hidden ${
                     active ? "ring-2" : "hover:border-line2"
@@ -333,10 +451,14 @@ export default function Pengaturan() {
       {/* AKUN SAYA */}
       {user && (
         <div className="card p-5 space-y-4 rise" style={{ animationDelay: "70ms" }}>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <IShield size={18} className="text-accent" />
             <h2 className="font-display font-bold">Akun Saya & Hak Akses</h2>
+            <Button size="sm" variant="soft" className="ml-auto" onClick={() => setPwOpen(true)}>
+              <IKey size={14} /> Ganti Password
+            </Button>
           </div>
+
           <div className="grid sm:grid-cols-3 gap-3">
             <div className="rounded-xl border border-line bg-surface p-3">
               <p className="text-[10px] text-faint font-bold uppercase tracking-wider">Nama</p>
@@ -365,8 +487,8 @@ export default function Pengaturan() {
             <IShield size={14} className="text-accent shrink-0 mt-0.5" />
             <span className="text-mute">
               {isAdmin
-                ? "Administrator mewarisi seluruh fitur kasir dan menambah kendali penuh: jadwal shift, analitik, refund, katalog, benefit member di halaman Member, pengguna, dan data. Transaksi di kasir admin bersifat uji — tidak tercatat."
-                : "Kasir berfokus pada operasional: jualan, mendaftarkan & melayani member, shift sendiri, serta struk miliknya. Benefit member bersifat baca-saja."}
+                ? "Administrator mewarisi seluruh fitur kasir dan menambah kendali penuh: jadwal shift, analitik, refund, katalog, benefit member di halaman Member, denah meja, pengguna, dan data. Transaksi di kasir admin bersifat uji — tidak tercatat."
+                : "Kasir berfokus pada operasional: jualan, mendaftarkan & melayani member, shift sendiri, mengosongkan meja, serta struk miliknya. Benefit member bersifat baca-saja."}
             </span>
           </div>
 
@@ -393,7 +515,8 @@ export default function Pengaturan() {
           </div>
 
           <p className="text-[11px] text-faint flex gap-1.5">
-            <IKey size={13} className="shrink-0 mt-0.5" /> Ganti password lewat menu profil di kanan atas atau tombol di sidebar.
+            <IInfo size={13} className="shrink-0 mt-0.5" /> Password disimpan sebagai hash di perangkat ini. Demo lokal —
+            jangan pakai password yang sama dengan akun penting lu.
           </p>
         </div>
       )}
@@ -410,6 +533,15 @@ export default function Pengaturan() {
             </Button>
           </div>
 
+          {state.users.length > 4 && (
+            <Input
+              value={userQuery}
+              onChange={(e) => setUserQuery(e.target.value)}
+              placeholder="Cari nama atau username…"
+              aria-label="Cari pengguna"
+            />
+          )}
+
           <div
             className="rounded-xl border p-3 text-[11px] flex gap-2"
             style={{
@@ -424,83 +556,91 @@ export default function Pengaturan() {
             </span>
           </div>
 
-          <ul className="space-y-2">
-            {state.users.map((u) => {
-              const locked = isProtectedUser(u);
-              const isMe = u.id === user?.id;
-              const shifts = state.shiftPlans.filter((p) => p.userId === u.id && p.active).length;
-              return (
-                <li key={u.id} className="rounded-2xl border border-line bg-surface p-3.5 flex flex-wrap items-center gap-3">
-                  <span
-                    className="w-10 h-10 rounded-xl grid place-items-center text-xs font-bold shrink-0"
-                    style={{
-                      color: u.role === "admin" ? "var(--accent-ink)" : "var(--amber-ink)",
-                      background:
-                        u.role === "admin"
-                          ? "linear-gradient(135deg, var(--accent), var(--accent2))"
-                          : "linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 70%, #000))",
-                    }}
-                  >
-                    {u.name
-                      .split(" ")
-                      .slice(0, 2)
-                      .map((w: string) => w[0])
-                      .join("")
-                      .toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold truncate flex items-center gap-1.5">
-                      {u.name}
-                      {isMe && <Badge color="var(--pandan)">sedang masuk</Badge>}
-                    </p>
-                    <p className="text-[11px] text-faint font-mono">@{u.username} · dibuat {dateID(u.createdAt)}</p>
-                    <p className="text-[10px] text-faint">
-                      {u.role === "admin" ? "Tanpa shift · kasir = mode uji" : `${shifts} shift terjadwal / minggu`}
-                    </p>
-                  </div>
-                  <Badge color={u.role === "admin" ? "var(--accent)" : "var(--amber)"}>
-                    {u.role === "admin" ? <IShield size={10} /> : <IUsers size={10} />} {roleLabel(u.role)}
-                  </Badge>
-                  {locked ? (
-                    <Badge color="var(--violet)">
-                      <IShield size={10} /> Dilindungi
-                    </Badge>
-                  ) : (
-                    <label className="flex items-center gap-2 text-[11px] font-bold text-mute">
-                      {u.active ? "Aktif" : "Nonaktif"}
-                      <Toggle
-                        small
-                        checked={u.active}
-                        label={`Aktifkan ${u.name}`}
-                        onChange={(v) => {
-                          dispatch({ type: "SET_USER_ACTIVE", ids: [u.id], active: v });
-                          sfx.tap();
-                          push({ msg: `${u.name} ${v ? "diaktifkan" : "dinonaktifkan"}`, type: "ok" });
-                        }}
-                      />
-                    </label>
-                  )}
-                  <div className="flex gap-1">
-                    <IconBtn label="Edit akun" className="!p-1.5" onClick={() => setUserForm({ open: true, edit: u })}>
-                      <IKey size={14} />
-                    </IconBtn>
-                    <IconBtn
-                      label={locked ? "Akun admin tidak bisa dihapus" : "Hapus akun"}
-                      className={`!p-1.5 ${locked ? "opacity-35 cursor-not-allowed" : "hover:!text-chili"}`}
-                      onClick={() => {
-                        if (locked) {
-                          sfx.error();
-                          push({ msg: "Akun administrator dilindungi — tidak bisa dihapus", type: "err" });
-                        } else setDelUser(u);
+          {filteredUsers.length === 0 ? (
+            <div className="rounded-2xl border border-line bg-surface p-6 text-center">
+              <p className="text-sm font-bold">Tidak ada akun yang cocok</p>
+              <p className="text-[11px] text-faint mt-1">Coba kata kunci lain, atau kosongkan pencarian.</p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {filteredUsers.map((u) => {
+                const locked = isProtectedUser(u);
+                const isMe = u.id === user?.id;
+                const shifts = state.shiftPlans.filter((p) => p.userId === u.id && p.active).length;
+                const openShift = state.shiftSessions.some((x) => x.userId === u.id && x.closedAt === null);
+                return (
+                  <li key={u.id} className="rounded-2xl border border-line bg-surface p-3.5 flex flex-wrap items-center gap-3">
+                    <span
+                      className="w-10 h-10 rounded-xl grid place-items-center text-xs font-bold shrink-0"
+                      style={{
+                        color: u.role === "admin" ? "var(--accent-ink)" : "var(--amber-ink)",
+                        background:
+                          u.role === "admin"
+                            ? "linear-gradient(135deg, var(--accent), var(--accent2))"
+                            : "linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 70%, #000))",
                       }}
                     >
-                      <ITrash size={14} />
-                    </IconBtn>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                      {initialsOf(u.name)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold truncate flex items-center gap-1.5">
+                        {u.name}
+                        {isMe && <Badge color="var(--pandan)">sedang masuk</Badge>}
+                        {openShift && (
+                          <Badge color="var(--laut)">
+                            <IClock size={10} /> shift berjalan
+                          </Badge>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-faint font-mono">@{u.username} · dibuat {dateID(u.createdAt)}</p>
+                      <p className="text-[10px] text-faint">
+                        {u.role === "admin" ? "Tanpa shift · kasir = mode uji" : `${shifts} shift terjadwal / minggu`}
+                      </p>
+                    </div>
+                    <Badge color={u.role === "admin" ? "var(--accent)" : "var(--amber)"}>
+                      {u.role === "admin" ? <IShield size={10} /> : <IUsers size={10} />} {roleLabel(u.role)}
+                    </Badge>
+                    {locked ? (
+                      <Badge color="var(--violet)">
+                        <IShield size={10} /> Dilindungi
+                      </Badge>
+                    ) : (
+                      <label className="flex items-center gap-2 text-[11px] font-bold text-mute">
+                        {u.active ? "Aktif" : "Nonaktif"}
+                        <Toggle
+                          small
+                          checked={u.active}
+                          label={`Aktifkan ${u.name}`}
+                          onChange={(v) => {
+                            dispatch({ type: "SET_USER_ACTIVE", ids: [u.id], active: v });
+                            sfx.tap();
+                            push({ msg: `${u.name} ${v ? "diaktifkan" : "dinonaktifkan"}`, type: "ok" });
+                          }}
+                        />
+                      </label>
+                    )}
+                    <div className="flex gap-1">
+                      <IconBtn label="Edit akun" className="!p-1.5" onClick={() => setUserForm({ open: true, edit: u })}>
+                        <IKey size={14} />
+                      </IconBtn>
+                      <IconBtn
+                        label={locked ? "Akun admin tidak bisa dihapus" : "Hapus akun"}
+                        className={`!p-1.5 ${locked ? "opacity-35 cursor-not-allowed" : "hover:!text-chili"}`}
+                        onClick={() => {
+                          if (locked) {
+                            sfx.error();
+                            push({ msg: "Akun administrator dilindungi — tidak bisa dihapus", type: "err" });
+                          } else setDelUser(u);
+                        }}
+                      >
+                        <ITrash size={14} />
+                      </IconBtn>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
 
@@ -593,6 +733,7 @@ export default function Pengaturan() {
                   max={LOGO_LIMITS.maxSize}
                   step={1}
                   value={s.logoSize}
+                  aria-label="Ukuran logo"
                   onChange={(e) => set({ logoSize: clamp(Number(e.target.value), LOGO_LIMITS.minSize, LOGO_LIMITS.maxSize) })}
                   className="w-full cursor-pointer"
                 />
@@ -685,7 +826,11 @@ export default function Pengaturan() {
           </div>
 
           <div className="card p-5 space-y-4 rise" style={{ animationDelay: "190ms" }}>
-            <h2 className="font-display font-bold">Pajak & Biaya</h2>
+            <div className="flex items-center gap-2">
+              <IReceipt size={18} className="text-accent" />
+              <h2 className="font-display font-bold">Pajak & Biaya</h2>
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
               <Field label="PPN (%)">
                 <Input
@@ -715,43 +860,73 @@ export default function Pengaturan() {
               </Field>
             </div>
 
-            <div className="rounded-xl border border-line bg-surface p-4">
-              <p className="text-xs font-bold mb-2">Contoh: member Gold belanja Rp 100.000</p>
-              {(() => {
-                const sub = 100000;
-                const pctGold = clamp(s.memberDiscountPct + s.memberBonusGold, 0, 40);
-                const md = Math.round((sub * pctGold) / 100);
-                const base = sub - md;
-                const tax = Math.round((base * s.taxPct) / 100);
-                return (
-                  <div className="text-xs text-mute space-y-1 font-mono">
-                    <div className="flex justify-between">
-                      <span>Subtotal</span>
-                      <span>Rp 100.000</span>
-                    </div>
-                    <div className="flex justify-between" style={{ color: "var(--violet)" }}>
-                      <span>Member Gold {pctGold}%</span>
-                      <span>−Rp {md.toLocaleString("id-ID")}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>PPN {s.taxPct}%</span>
-                      <span>Rp {tax.toLocaleString("id-ID")}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-accent border-t border-line pt-1">
-                      <span>Total</span>
-                      <span>Rp {(base + tax).toLocaleString("id-ID")}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Poin</span>
-                      <span>+{Math.floor((base + tax) / Math.max(100, s.memberPointRate))}</span>
-                    </div>
+            <div className="rounded-xl border border-line bg-surface p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-bold">Simulasi struk member</p>
+                <Badge color={TIER_COLOR[simTier]}>{simTier}</Badge>
+                <span className="ml-auto text-[10px] text-faint">Rumus sama persis dengan kasir</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Nilai belanja (Rp)">
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={simAmount}
+                    onChange={(e) => setSimAmount(clamp(Number(e.target.value) || 0, 0, 100000000))}
+                  />
+                </Field>
+                <Field label="Tier member">
+                  <Select
+                    value={simTier}
+                    onChange={(v) => setSimTier(v as MemberTier)}
+                    options={TIERS.map((t) => ({ v: t, l: `${t} · +${tierBonusOf(t, s)}%` }))}
+                  />
+                </Field>
+              </div>
+
+              <div className="text-xs text-mute space-y-1 font-mono">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <span>{rupiah(simAmount)}</span>
+                </div>
+                <div className="flex justify-between" style={{ color: "var(--violet)" }}>
+                  <span>
+                    Member {simTier} {simPct}%
+                  </span>
+                  <span>−{rupiah(simMember)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>PPN {s.taxPct}%</span>
+                  <span>{rupiah(simTax)}</span>
+                </div>
+                {s.servicePct > 0 && (
+                  <div className="flex justify-between">
+                    <span>Service {s.servicePct}%</span>
+                    <span>{rupiah(simService)}</span>
                   </div>
-                );
-              })()}
+                )}
+                <div className="flex justify-between font-bold text-accent border-t border-line pt-1">
+                  <span>Total</span>
+                  <span>{rupiah(simTotal)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Poin didapat</span>
+                  <span>+{num(simPoints)}</span>
+                </div>
+              </div>
+
+              {!s.memberEnabled && (
+                <p className="text-[10.5px] text-amber flex gap-1.5">
+                  <IAlert size={12} className="shrink-0 mt-0.5" /> Program member sedang nonaktif — potongan & poin tidak
+                  diterapkan di kasir.
+                </p>
+              )}
             </div>
 
             <p className="text-[11px] text-faint">
-              Pengaturan potongan tier member sekarang dikelola di halaman <b className="text-ink">Member → Benefit Member</b>.
+              Pengaturan potongan tier member dikelola di halaman <b className="text-ink">Member → Benefit Member</b>.
             </p>
           </div>
         </div>
@@ -765,12 +940,32 @@ export default function Pengaturan() {
               <IDatabase size={18} className="text-accent" />
               <h2 className="font-display font-bold">Data & Backup</h2>
             </div>
+
+            <div className="rounded-xl border border-line bg-surface p-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-bold">Penyimpanan browser</p>
+                <span className="ml-auto text-[11px] font-mono tabular-nums" style={{ color: storage.tone }}>
+                  {num(sizeKB)} KB / ±{num(STORAGE_QUOTA_KB)} KB
+                </span>
+              </div>
+              <div className="h-2.5 rounded-full overflow-hidden border border-line" style={{ background: "var(--bg2)" }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${Math.max(2, storage.pct)}%`,
+                    background: `linear-gradient(90deg, ${storage.tone}, color-mix(in srgb, ${storage.tone} 55%, var(--accent)))`,
+                  }}
+                />
+              </div>
+              <p className="text-[10.5px] text-faint">{storage.note}</p>
+            </div>
+
             <p className="text-xs text-mute">
-              localStorage · {sizeKB} KB. Isi demo terpusat di <code className="kbd">lib/demo-data.ts</code>.
-              Saat ini: <b className="text-ink">{state.products.length}</b> produk · <b className="text-ink">{state.transactions.length}</b> transaksi ·{" "}
-              <b className="text-ink">{memberCount}</b> member · <b className="text-ink">{state.rewards.length}</b> hadiah ·{" "}
-              <b className="text-ink">{state.shiftPlans.length}</b> jadwal shift · <b className="text-ink">{state.users.length}</b> akun ·{" "}
-              <b className="text-ink">{state.notifications.length}</b> log.
+              localStorage · isi demo terpusat di <code className="kbd">lib/demo-data.ts</code>. Saat ini:{" "}
+              <b className="text-ink">{state.products.length}</b> produk · <b className="text-ink">{state.transactions.length}</b> transaksi ·{" "}
+              <b className="text-ink">{memberCount}</b> member · <b className="text-ink">{state.tables.length}</b> meja ·{" "}
+              <b className="text-ink">{state.rewards.length}</b> hadiah · <b className="text-ink">{state.shiftPlans.length}</b> jadwal shift ·{" "}
+              <b className="text-ink">{state.users.length}</b> akun · <b className="text-ink">{state.notifications.length}</b> log.
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -787,10 +982,19 @@ export default function Pengaturan() {
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) importJSON(f);
+                  if (f) readBackup(f);
                   e.target.value = "";
                 }}
               />
+            </div>
+
+            <div className="rounded-xl border border-line bg-surface p-3 text-[11px] flex gap-2">
+              <IInfo size={13} className="text-accent shrink-0 mt-0.5" />
+              <span className="text-mute">
+                Impor selalu melewati <b className="text-ink">normalize()</b> — SKU duplikat diperbaiki, stok dibatasi,
+                foto divalidasi, denah meja dilengkapi, dan transaksi mode uji dibuang. Hasilnya ditinjau dulu sebelum
+                diterapkan, dan bisa diurungkan.
+              </span>
             </div>
 
             <div className="rounded-2xl border border-line bg-surface p-4">
@@ -798,7 +1002,8 @@ export default function Pengaturan() {
                 <IRefresh size={15} className="text-accent" /> Acak Ulang Data Demo
               </p>
               <p className="text-[11px] text-mute mt-1 mb-3">
-                Buat ulang 90 hari transaksi, produk, promo, member, hadiah, jadwal & sesi shift. Pengaturan, brand, dan akun terdaftar tetap.
+                Buat ulang 90 hari transaksi, produk, promo, member, hadiah, jadwal & sesi shift, serta 13 meja demo.
+                Pengaturan, brand, dan akun terdaftar tetap.
               </p>
               <Button variant="soft" size="sm" onClick={() => setResetOpen(true)}>
                 <IRefresh size={14} /> Acak Ulang
@@ -817,7 +1022,7 @@ export default function Pengaturan() {
               </p>
               <p className="text-[11px] text-mute mt-1">
                 Menghapus produk, paket, promo, transaksi, pelanggan & member, hadiah, order ditahan, view, jadwal shift, dan log notifikasi.
-                Tetap tersimpan: akun admin & kasir terdaftar, sesi login, pengaturan toko, brand, logo, tema, dan benefit member.
+                Tetap tersimpan: akun admin & kasir terdaftar, sesi login, pengaturan toko, brand, logo, tema, benefit member, dan denah meja.
               </p>
               <Button
                 variant="danger"
@@ -836,8 +1041,10 @@ export default function Pengaturan() {
           <div className="card p-5 rise" style={{ animationDelay: "250ms" }}>
             <h2 className="font-display font-bold mb-3">Tentang {s.brandName}</h2>
             <p className="text-sm text-mute leading-relaxed">
-              POS untuk UMKM Indonesia — kasir cepat, katalog foto, paket bundling, promo terjadwal, benefit member bertier berbasis akumulasi belanja dengan poin yang bisa ditukar hadiah,
-              shift khusus kasir dengan tutup otomatis, portal member mandiri, log aktivitas sistem, dan Google Maps pada halaman pelanggan.
+              POS untuk UMKM Indonesia — kasir cepat dengan tipe pesanan makan di sini / bawa pulang, denah meja visual,
+              katalog foto, paket bundling, promo terjadwal, benefit member bertier berbasis akumulasi belanja dengan poin
+              yang bisa ditukar hadiah, shift khusus kasir dengan tutup otomatis, portal member mandiri, log aktivitas
+              sistem, dan Google Maps pada halaman pelanggan.
             </p>
             <div className="flex flex-wrap gap-2 mt-4">
               <Badge color="var(--accent)">Next.js 16</Badge>
@@ -846,8 +1053,26 @@ export default function Pengaturan() {
               <Badge color="var(--magenta)">TypeScript 5</Badge>
               <Badge color="var(--violet)">Benefit member</Badge>
               <Badge color="var(--pandan)">Portal member</Badge>
+              <Badge color="var(--chili)">Denah meja</Badge>
+              <Badge color="var(--laut)">Sinkron antar tab</Badge>
             </div>
-            <p className="text-[11px] text-faint mt-4">v1.9 · demo lokal. Pembayaran QRIS/Kartu simulasi; geocoding lewat route server agar tetap jalan di Vercel.</p>
+
+            <div className="rounded-xl border border-line bg-surface p-3 mt-4 text-[11px] text-mute space-y-1.5">
+              <p className="flex gap-1.5">
+                <ICheckCircle size={12} className="text-pandan shrink-0 mt-0.5" /> Data tersimpan otomatis tiap perubahan
+                (debounce 250 ms) dan tersinkron antar tab di browser yang sama.
+              </p>
+              <p className="flex gap-1.5">
+                <IAlert size={12} className="text-amber shrink-0 mt-0.5" /> Antar perangkat belum tersinkron — butuh
+                backend. Pindah browser berarti mulai dari data demo baru.
+              </p>
+              <p className="flex gap-1.5">
+                <IAlert size={12} className="text-amber shrink-0 mt-0.5" /> Pembayaran QRIS & kartu masih simulasi;
+                geocoding lewat route server agar tetap jalan di Vercel.
+              </p>
+            </div>
+
+            <p className="text-[11px] text-faint mt-4">v1.1.1 · demo lokal, bukan sistem transaksi produksi.</p>
           </div>
         </div>
       )}
@@ -856,8 +1081,9 @@ export default function Pengaturan() {
         <div className="card p-5 rise" style={{ animationDelay: "120ms" }}>
           <h2 className="font-display font-bold mb-2">Ruang kerja kasir</h2>
           <p className="text-sm text-mute">
-            Kamu masuk sebagai <b className="text-ink">Kasir</b>: kasir, member pelanggan, shift sendiri, dan struk milikmu.
-            Katalog produk, analitik bisnis, refund, benefit member, pengguna, dan data demo dikelola administrator — yang mewarisi seluruh fitur kasir juga.
+            Kamu masuk sebagai <b className="text-ink">Kasir</b>: kasir, member pelanggan, shift sendiri, mengosongkan meja,
+            dan struk milikmu. Katalog produk, analitik bisnis, refund, benefit member, log sistem, pengguna, dan data demo
+            dikelola administrator — yang mewarisi seluruh fitur kasir juga.
           </p>
         </div>
       )}
@@ -868,8 +1094,68 @@ export default function Pengaturan() {
         onConfirm={reseed}
         title="Acak ulang data demo?"
         confirmLabel="Ya, Acak Ulang"
-        desc="Produk, transaksi, pelanggan & member, hadiah, order ditahan, jadwal shift, dan sesi shift diganti dengan data demo baru. Pengaturan, tema, logo, dan akun terdaftar tidak berubah."
+        desc="Produk, transaksi, pelanggan & member, hadiah, order ditahan, jadwal shift, sesi shift, dan denah meja diganti dengan data demo baru. Pengaturan, tema, logo, dan akun terdaftar tidak berubah."
       />
+
+      <Modal
+        open={!!preview}
+        onClose={() => setPreview(null)}
+        title="Tinjau backup sebelum dipulihkan"
+        footer={
+          <div className="flex gap-2 justify-end">
+            <Button variant="ghost" onClick={() => setPreview(null)}>
+              Batal
+            </Button>
+            <Button onClick={applyBackup}>
+              <IUpload size={15} /> Pulihkan Sekarang
+            </Button>
+          </div>
+        }
+      >
+        {preview && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-line bg-surface p-3 text-[12px]">
+              <p className="font-bold text-ink flex items-center gap-1.5">
+                <ICheckCircle size={13} className="text-pandan" /> File valid & sudah dinormalisasi
+              </p>
+              <p className="text-faint font-mono mt-1 truncate">{preview.name}</p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { l: "Produk", v: preview.next.products.length, c: "var(--accent)" },
+                { l: "Transaksi", v: preview.next.transactions.length, c: "var(--pandan)" },
+                { l: "Member", v: preview.next.customers.filter((c) => c.member).length, c: "var(--violet)" },
+                { l: "Meja", v: preview.next.tables.length, c: "var(--laut)" },
+                { l: "Hadiah", v: preview.next.rewards.length, c: "var(--amber)" },
+                { l: "Jadwal shift", v: preview.next.shiftPlans.length, c: "var(--magenta)" },
+              ].map((x) => (
+                <div key={x.l} className="rounded-xl border border-line bg-surface p-3">
+                  <p className="text-[9.5px] text-faint font-bold uppercase tracking-wider">{x.l}</p>
+                  <p className="font-display font-bold text-xl mt-0.5 tabular-nums" style={{ color: x.c }}>
+                    {num(x.v)}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="rounded-xl border p-3 text-[11.5px] flex gap-2"
+              style={{
+                borderColor: "color-mix(in srgb, var(--amber) 40%, transparent)",
+                background: "color-mix(in srgb, var(--amber) 8%, transparent)",
+              }}
+            >
+              <IAlert size={14} className="text-amber shrink-0 mt-0.5" />
+              <span className="text-mute">
+                Data saat ini ({state.products.length} produk · {state.transactions.length} transaksi) akan diganti.
+                Akun terdaftar, sesi login, dan sesi member tetap dipakai. Setelah dipulihkan masih bisa{" "}
+                <b className="text-ink">diurungkan</b> lewat notifikasi.
+              </span>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={wipeOpen}
@@ -918,7 +1204,7 @@ export default function Pengaturan() {
                 </li>
               ))}
               <li className="flex items-center gap-1.5">
-                <ICheckCircle size={12} className="text-pandan" /> Pengaturan toko, brand, logo, tema, benefit member, dan sesi login
+                <ICheckCircle size={12} className="text-pandan" /> Pengaturan toko, brand, logo, tema, benefit member, denah meja, dan sesi login
               </li>
             </ul>
           </div>
@@ -945,6 +1231,8 @@ export default function Pengaturan() {
 
       <UserFormModal open={userForm.open} edit={userForm.edit} onClose={() => setUserForm({ open: false, edit: null })} />
 
+      <PasswordModal open={pwOpen} user={user} onClose={() => setPwOpen(false)} />
+
       <Confirm
         open={!!delUser}
         onClose={() => setDelUser(null)}
@@ -954,6 +1242,162 @@ export default function Pengaturan() {
         desc={`Akun @${delUser?.username ?? ""} tidak bisa masuk lagi dan jadwal shiftnya dihapus. Riwayat transaksi tetap tersimpan. Bisa diurungkan lewat notifikasi.`}
       />
     </div>
+  );
+}
+
+function PasswordModal({ open, user, onClose }: { open: boolean; user: User | null; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const { push } = useToast();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+    setReveal(false);
+    setErr("");
+  }, [open]);
+
+  const strength = passwordScore(next);
+  const sameAsOld = user && next ? verifyPassword(next, user.passHash) : false;
+
+  const save = () => {
+    if (!user) return;
+    if (!verifyPassword(current, user.passHash)) {
+      setErr("Password saat ini salah");
+      sfx.error();
+      return;
+    }
+    if (next.length < 6) {
+      setErr("Password baru minimal 6 karakter");
+      sfx.error();
+      return;
+    }
+    if (next === current) {
+      setErr("Password baru harus berbeda dari yang lama");
+      sfx.error();
+      return;
+    }
+    if (next !== confirm) {
+      setErr("Konfirmasi password tidak sama");
+      sfx.error();
+      return;
+    }
+    dispatch({ type: "UPDATE_USER", user: { ...user, passHash: hashPassword(next) } });
+    sfx.success();
+    push({ msg: "Password diganti — pakai password baru saat login berikutnya", type: "ok" });
+    onClose();
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Ganti Password · ${user?.name ?? ""}`}
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="ghost" onClick={onClose}>
+            Batal
+          </Button>
+          <Button onClick={save} disabled={!current || !next || !confirm}>
+            <IKey size={15} /> Simpan Password
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div
+          className="rounded-xl border p-3 text-[11px] flex gap-2"
+          style={{
+            borderColor: "color-mix(in srgb, var(--accent) 30%, transparent)",
+            background: "var(--accent-soft)",
+          }}
+        >
+          <IShield size={14} className="text-accent shrink-0 mt-0.5" />
+          <span className="text-mute">
+            Username <b className="text-ink font-mono">@{user?.username ?? ""}</b> tidak berubah. Password disimpan
+            sebagai hash di perangkat ini.
+          </span>
+        </div>
+
+        <Field label="Password saat ini *">
+          <Input
+            type={reveal ? "text" : "password"}
+            value={current}
+            onChange={(e) => {
+              setCurrent(e.target.value);
+              setErr("");
+            }}
+            placeholder="••••••••"
+            autoFocus
+          />
+        </Field>
+
+        <Field label="Password baru *" hint="Minimal 6 karakter" error={err}>
+          <Input
+            type={reveal ? "text" : "password"}
+            value={next}
+            onChange={(e) => {
+              setNext(e.target.value);
+              setErr("");
+            }}
+            placeholder="••••••••"
+          />
+        </Field>
+
+        <div className="space-y-1.5">
+          <div className="flex gap-1">
+            {[0, 1, 2, 3].map((i) => (
+              <span
+                key={i}
+                className="h-1.5 flex-1 rounded-full transition-all"
+                style={{ background: i < strength.score ? strength.color : "var(--line)" }}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10.5px] font-bold" style={{ color: strength.color }}>
+              {strength.label}
+            </span>
+            <button
+              type="button"
+              onClick={() => setReveal((v) => !v)}
+              className="ml-auto text-[10.5px] font-bold text-mute hover:text-accent transition-colors"
+            >
+              {reveal ? "Sembunyikan" : "Lihat"} password
+            </button>
+          </div>
+        </div>
+
+        <Field label="Ulangi password baru *">
+          <Input
+            type={reveal ? "text" : "password"}
+            value={confirm}
+            onChange={(e) => {
+              setConfirm(e.target.value);
+              setErr("");
+            }}
+            placeholder="••••••••"
+          />
+        </Field>
+
+        {confirm && next !== confirm && (
+          <p className="text-[11px] text-chili flex gap-1.5">
+            <IAlert size={12} className="shrink-0 mt-0.5" /> Konfirmasi belum sama.
+          </p>
+        )}
+        {sameAsOld && (
+          <p className="text-[11px] text-amber flex gap-1.5">
+            <IAlert size={12} className="shrink-0 mt-0.5" /> Password baru sama dengan yang lama.
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -976,6 +1420,7 @@ function UserFormModal({ open, edit, onClose }: { open: boolean; edit: User | nu
   }, [open, edit]);
 
   const locked = edit ? isProtectedUser(edit) : false;
+  const strength = passwordScore(pw);
 
   const save = () => {
     const nm = name.trim();
@@ -1121,25 +1566,39 @@ function UserFormModal({ open, edit, onClose }: { open: boolean; edit: User | nu
         </Field>
 
         {pw && (
-          <Field label="Ulangi password">
-            <Input
-              type="password"
-              value={pw2}
-              onChange={(e) => {
-                setPw2(e.target.value);
-                setErr("");
-              }}
-              placeholder="••••••••"
-            />
-          </Field>
+          <>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className="h-1.5 flex-1 rounded-full transition-all"
+                  style={{ background: i < strength.score ? strength.color : "var(--line)" }}
+                />
+              ))}
+            </div>
+            <p className="text-[10.5px] font-bold" style={{ color: strength.color }}>
+              Kekuatan: {strength.label}
+            </p>
+            <Field label="Ulangi password">
+              <Input
+                type="password"
+                value={pw2}
+                onChange={(e) => {
+                  setPw2(e.target.value);
+                  setErr("");
+                }}
+                placeholder="••••••••"
+              />
+            </Field>
+          </>
         )}
 
         {sameAsOld && <p className="text-[11px] text-amber">Password baru sama dengan yang lama.</p>}
 
         {!edit && (
           <p className="text-[11px] text-faint">
-            Kasir mendapat akses: kasir, daftarkan & layani member, shift sendiri, dan transaksi miliknya.
-            Benefit member bersifat baca-saja; katalog, analitik, refund, dan pengaturan toko tetap milik administrator.
+            Kasir mendapat akses: kasir, daftarkan & layani member, shift sendiri, mengosongkan meja, dan transaksi miliknya.
+            Benefit member bersifat baca-saja; katalog, analitik, refund, log sistem, dan pengaturan toko tetap milik administrator.
           </p>
         )}
       </div>

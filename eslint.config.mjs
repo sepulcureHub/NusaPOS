@@ -5,24 +5,27 @@ import nextTs from "eslint-config-next/typescript";
 /**
  * NusaPOS — ESLint flat config (Next.js 16 + ESLint 9).
  *
- * Catatan penting: Next.js 16 mengaktifkan aturan React Compiler
- * (react-hooks/set-state-in-effect, purity, immutability) secara default.
- * Aturan ini HANYA relevan kalau project memakai React Compiler
- * (babel-plugin-react-compiler / compiler flag). Project ini TIDAK memakainya,
- * jadi aturan ini dimatikan untuk menghindari false positive —
- * kode di bawah ini valid dan bekerja normal di React 19 biasa.
+ * Project ini TIDAK memakai React Compiler (babel-plugin-react-compiler / flag compiler).
+ * Karena itu rule yang berasal dari pipeline validasi compiler dimatikan:
+ *   - set-state-in-effect : setState di effect adalah pola hydrate yang sah
+ *   - purity              : Date.now()/Math.random() di render demo memang dipakai
+ *   - immutability        : menulis DOM di event handler & akumulator lokal di .map()
+ *                           itu sah tanpa compiler (false positive)
  *
- * Bug nyata (conditional hooks, variable reassign setelah render, prefer-const)
- * tetap dijaga dan harus diperbaiki di tiap file.
+ * YANG TETAP ERROR DAN TIDAK BOLEH DIMATIKAN:
+ *   - react-hooks/rules-of-hooks  → bug nyata (hook dipanggil kondisional)
+ *   - prefer-const, no-undef, dll → bug nyata
+ * Kalau nanti project mengaktifkan React Compiler, hidupkan lagi tiga rule di bawah.
  */
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
     rules: {
-      // ── Disable aturan React Compiler (tidak relevan, project tidak memakainya) ──
+      // ── Rule khusus React Compiler (tidak relevan di project ini) ──
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/purity": "off",
+      "react-hooks/immutability": "off",
 
       // ── Foto produk & logo disimpan sebagai data URL (base64) di localStorage.
       // next/image tidak mengoptimalkan data URL, jadi <img> memang tepat di sini.
