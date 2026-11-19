@@ -10,7 +10,7 @@ import { hashPassword, homeFor, roleLabel, verifyPassword } from "@/lib/auth";
 import { DEFAULT_DEMO_PASSWORDS, STORE_CLOSE, STORE_OPEN } from "@/lib/demo-data";
 import { applyTheme, resolveTheme } from "@/lib/brand";
 import { dateFull } from "@/lib/format";
-import { login, getLiveSession } from "@/app/actions/auth";
+import { loginAndGetSession } from "@/app/actions/auth";
 import { getCatalog } from "@/app/actions/catalog";
 import type { User } from "@/lib/types";
 import { AuthField } from "./AuthField";
@@ -149,30 +149,26 @@ export function LoginScreen() {
     setError("");
     setHint("");
 
-    /* ══ LIVE: verifikasi via Supabase Auth, lalu hydrate store ══ */
+    /* ══ LIVE: login + profil dalam SATU server action ══ */
     if (LIVE) {
       try {
-        const res = await login(ident, password);
-        if (!res.ok) {
+        const res = await loginAndGetSession(ident, password);
+        if (!res.ok || !res.session) {
           setBusy(false);
           setError(res.error ?? "Login gagal.");
           sfx.error();
           return;
         }
-        const sess = await getLiveSession();
-        if (!sess) {
-          setBusy(false);
-          setError("Sesi tidak valid. Coba lagi.");
-          sfx.error();
-          return;
-        }
+        const sess = res.session;
+
         const cat = await getCatalog();
         if ("error" in cat) {
           setBusy(false);
-          setError("Gagal memuat data toko.");
+          setError("Login berhasil, tapi data toko gagal dimuat. Pastikan supabase/seed.sql sudah dijalankan.");
           sfx.error();
           return;
         }
+
         const u: User = {
           id: sess.userId,
           username: sess.name.split(" ")[0]?.toLowerCase() ?? "staf",
@@ -364,7 +360,7 @@ export function LoginScreen() {
                     value={username}
                     onChange={(v) => { setUsername(v); setError(""); setPicked(null); setHint(""); }}
                     icon={<IUser size={17} />}
-                    placeholder={LIVE ? "admin@nusapos.local" : "ketik username akun"}
+                    placeholder={LIVE ? "admin@nusapos.demo" : "ketik username akun"}
                     autoComplete="username"
                     filling={filling === "username"}
                     onEnter={submitStaff}
