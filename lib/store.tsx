@@ -21,6 +21,7 @@ import { normalizeUsername } from "./member";
 import type { Perm } from "./auth";
 
 const KEY = "nusapos:v1";
+const LIVE = process.env.NEXT_PUBLIC_DATA_MODE === "live";
 const MAX_NOTIFS = 300;
 
 /* Identitas tab ini + jam logis (ms) untuk sinkron antar tab. */
@@ -781,7 +782,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /* 2. Auto-close shift tiap 15 detik + saat tab kembali visible. */
   useEffect(() => {
-    if (!state.hydrated) return;
+    if (!state.hydrated || LIVE) return;
     const tick = () => dispatch({ type: "AUTO_CLOSE_SHIFTS", now: Date.now() });
     tick();
     const t = setInterval(tick, 15000);
@@ -792,7 +793,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /* 3. Persist debounce + jam logis & ID tab supaya tab lain bisa membandingkan. */
   useEffect(() => {
-    if (!state.hydrated) return;
+    if (!state.hydrated || LIVE) return;
     if (skipWriteRef.current) { skipWriteRef.current = false; return; } // jangan gema-kan state tab lain
     const t = setTimeout(() => {
       const rev = Math.max(Date.now(), revRef.current + 1);
@@ -813,6 +814,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   /* 4. Sinkron antar tab di browser yang sama (event `storage` hanya menembak tab lain). */
+  if (LIVE) return;
   useEffect(() => {
     if (!state.hydrated) return;
     const onStorage = (e: StorageEvent) => {

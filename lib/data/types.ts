@@ -16,13 +16,15 @@ export interface SaleInput {
   orderType: "dinein" | "takeaway";
   tableId: string | null;
   discount: { type: "rp" | "pct"; value: number };
-  isTest: boolean;
 }
 
 export interface SaleResult {
   ok: boolean;
   id?: string;
   txNumber?: string;
+  total?: number;
+  isTest?: boolean;
+  shiftId?: string;
   error?: string;
 }
 

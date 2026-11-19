@@ -244,6 +244,9 @@ export interface Settings {
   memberBonusSilver: number;
   memberBonusGold: number;
   memberBonusPlatinum: number;
+  timezone?: string;
+  maxDiscountKasirPct?: number;
+  adminSalesAsTest?: boolean;
   memberBenefitNotes: string;
 }
 

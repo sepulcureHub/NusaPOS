@@ -36,6 +36,7 @@ import {
   PageSkel, Segmented,
 } from "@/components/ui";
 import { KasirTestBanner } from "@/components/KasirTestBanner";
+import { LiveShiftGate } from "@/components/LiveShiftGate";
 import { QRISCenter } from "@/components/QRISCenter";
 import {
   IBox, ICalendar, ICart, ICard, ICash, ICheckCircle, IHeart, IImage,
@@ -115,7 +116,7 @@ function roundUp(value: number, step: number) {
 export default function KasirPage() {
   return (
     <Suspense fallback={<PageSkel />}>
-      <Kasir />
+      <LiveShiftGate><Kasir /></LiveShiftGate>
     </Suspense>
   );
 }
@@ -392,7 +393,6 @@ function Kasir() {
         orderType,
         tableId: orderType === "dinein" ? tableId : null,
         discount: disc,
-        isTest: false,
       });
 
       if (!res.ok) {
@@ -430,8 +430,8 @@ function Kasir() {
         customerName: customer.name,
         cashier: user?.name ?? settings.cashier,
         status: "Selesai",
-        shiftId: myShift?.id,
-        isTest: false,
+        shiftId: res.shiftId ?? myShift?.id,
+        isTest: res.isTest ?? false,
         orderType,
         tableId: orderType === "dinein" ? tableId : null,
         tableLabel: table?.label ?? null,

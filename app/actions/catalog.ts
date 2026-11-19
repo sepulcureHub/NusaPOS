@@ -7,8 +7,8 @@ import type { Settings } from "@/lib/types";
 
 export async function getCatalog(): Promise<CatalogData | { error: string }> {
   const sb = await supabaseServer();
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) return { error: "belum_login" };
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { error: "belum_login" };
 
   const [prod, cust, tbl, store] = await Promise.all([
     sb.from("products").select("*").eq("active", true).order("sort_order"),
