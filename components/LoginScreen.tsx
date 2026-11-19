@@ -10,6 +10,8 @@ import { hashPassword, homeFor, roleLabel, verifyPassword } from "@/lib/auth";
 import { DEFAULT_DEMO_PASSWORDS, STORE_CLOSE, STORE_OPEN } from "@/lib/demo-data";
 import { applyTheme, resolveTheme } from "@/lib/brand";
 import { dateFull } from "@/lib/format";
+import { login, getLiveSession } from "@/app/actions/auth";
+import { getCatalog } from "@/app/actions/catalog";
 import type { User } from "@/lib/types";
 import { AuthField } from "./AuthField";
 import { MemberLoginForm } from "./MemberAuth";
@@ -26,6 +28,8 @@ export function LoginScreen() {
   const { state, dispatch } = useStore();
   const { push } = useToast();
   const router = useRouter();
+
+  const LIVE = process.env.NEXT_PUBLIC_DATA_MODE === "live";
 
   const [mode, setMode] = useState<LoginMode>("staf");
 
@@ -132,18 +136,66 @@ export function LoginScreen() {
     });
   };
 
-  const submitStaff = () => {
+  const submitStaff = async () => {
     if (busy || filling) return;
-    const uname = username.trim().toLowerCase();
-    if (!uname || !password) {
-      setError("Username dan password wajib diisi.");
+    const ident = username.trim();
+    if (!ident || !password) {
+      setError(LIVE ? "Email dan password wajib diisi." : "Username dan password wajib diisi.");
       sfx.error();
       return;
     }
 
     setBusy(true);
     setError("");
+    setHint("");
 
+    /* ══ LIVE: verifikasi via Supabase Auth, lalu hydrate store ══ */
+    if (LIVE) {
+      try {
+        const res = await login(ident, password);
+        if (!res.ok) {
+          setBusy(false);
+          setError(res.error ?? "Login gagal.");
+          sfx.error();
+          return;
+        }
+        const sess = await getLiveSession();
+        if (!sess) {
+          setBusy(false);
+          setError("Sesi tidak valid. Coba lagi.");
+          sfx.error();
+          return;
+        }
+        const cat = await getCatalog();
+        if ("error" in cat) {
+          setBusy(false);
+          setError("Gagal memuat data toko.");
+          sfx.error();
+          return;
+        }
+        const u: User = {
+          id: sess.userId,
+          username: sess.name.split(" ")[0]?.toLowerCase() ?? "staf",
+          name: sess.name,
+          role: sess.role,
+          active: true,
+          passHash: "",
+        } as User;
+        dispatch({ type: "HYDRATE_LIVE", user: u, settings: cat.settings });
+        sfx.success();
+        push({ msg: `Selamat datang, ${u.name} — ${roleLabel(u.role)}`, type: "ok" });
+        setBusy(false);
+        router.replace(homeFor(u.role));
+      } catch {
+        setBusy(false);
+        setError("Terjadi kesalahan. Coba lagi.");
+        sfx.error();
+      }
+      return;
+    }
+
+    /* ══ DEMO: verifikasi lokal, TIDAK DIUBAH ══ */
+    const uname = ident.toLowerCase();
     timers.current.push(
       setTimeout(() => {
         const u = state.users.find((x) => x.username.toLowerCase() === uname);
@@ -185,6 +237,11 @@ export function LoginScreen() {
           <Link href="/beranda" className="btn btn-ghost btn-sm hidden sm:inline-flex">
             <IStore size={14} /> Halaman pelanggan
           </Link>
+          {LIVE && (
+            <Badge color="var(--pandan)">
+              <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: "currentColor" }} /> LIVE
+            </Badge>
+          )}
           <span className="hidden lg:inline-flex items-center gap-2 text-[11px] text-faint font-mono">
             {now
               ? new Date(now).toLocaleTimeString("id-ID", {
@@ -295,17 +352,19 @@ export function LoginScreen() {
                     </span>
                     <div>
                       <h2 className="font-display font-bold text-lg leading-none">Masuk staf</h2>
-                      <p className="text-[11px] text-faint mt-1">Admin & kasir yang terdaftar di perangkat ini</p>
+                      <p className="text-[11px] text-faint mt-1">
+                        {LIVE ? "Akun staf yang terdaftar di server" : "Admin & kasir yang terdaftar di perangkat ini"}
+                      </p>
                     </div>
                   </div>
 
                   <AuthField
                     ref={userRef}
-                    label="Username"
+                    label={LIVE ? "Email" : "Username"}
                     value={username}
                     onChange={(v) => { setUsername(v); setError(""); setPicked(null); setHint(""); }}
                     icon={<IUser size={17} />}
-                    placeholder="ketik username akun"
+                    placeholder={LIVE ? "admin@nusapos.local" : "ketik username akun"}
                     autoComplete="username"
                     filling={filling === "username"}
                     onEnter={submitStaff}
@@ -329,58 +388,61 @@ export function LoginScreen() {
                     {busy ? "Memverifikasi…" : filling ? "Mengisi akun…" : <>Masuk staf <IArrowRight size={16} /></>}
                   </Button>
 
-                  <div className="pt-4 border-t border-line">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-faint flex items-center gap-1.5">
-                      <IUsers size={12} /> Akun terdaftar — klik untuk isi otomatis
-                    </p>
-                    {accounts.length === 0 ? (
-                      <p className="text-[11px] text-amber mt-3 flex gap-1.5">
-                        <IAlert size={13} className="shrink-0 mt-0.5" /> Belum ada akun aktif.
+                  {/* Akun terdaftar & auto-fill HANYA di demo — di live, user ada di server */}
+                  {!LIVE && (
+                    <div className="pt-4 border-t border-line">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-faint flex items-center gap-1.5">
+                        <IUsers size={12} /> Akun terdaftar — klik untuk isi otomatis
                       </p>
-                    ) : (
-                      <div className="grid gap-2 mt-2.5">
-                        {accounts.map((u) => {
-                          const on = picked === u.id;
-                          const pw = demoPasswordOf(u);
-                          const color = u.role === "admin" ? "var(--accent)" : "var(--amber)";
-                          return (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => autoFillStaff(u)}
-                              className="group relative flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-all duration-300 active:scale-[.98] overflow-hidden"
-                              style={{
-                                borderColor: on ? color : "var(--line)",
-                                background: on ? `color-mix(in srgb, ${color} 10%, var(--surface))` : "var(--surface)",
-                                boxShadow: on ? `0 12px 30px -18px ${color}` : "none",
-                              }}
-                            >
-                              <span
-                                className="w-9 h-9 rounded-xl grid place-items-center shrink-0 transition-transform duration-300 group-hover:scale-110"
+                      {accounts.length === 0 ? (
+                        <p className="text-[11px] text-amber mt-3 flex gap-1.5">
+                          <IAlert size={13} className="shrink-0 mt-0.5" /> Belum ada akun aktif.
+                        </p>
+                      ) : (
+                        <div className="grid gap-2 mt-2.5">
+                          {accounts.map((u) => {
+                            const on = picked === u.id;
+                            const pw = demoPasswordOf(u);
+                            const color = u.role === "admin" ? "var(--accent)" : "var(--amber)";
+                            return (
+                              <button
+                                key={u.id}
+                                type="button"
+                                onClick={() => autoFillStaff(u)}
+                                className="group relative flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-all duration-300 active:scale-[.98] overflow-hidden"
                                 style={{
-                                  color: on ? "var(--accent-ink)" : color,
-                                  background: on
-                                    ? `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 60%, #000))`
-                                    : `color-mix(in srgb, ${color} 14%, transparent)`,
+                                  borderColor: on ? color : "var(--line)",
+                                  background: on ? `color-mix(in srgb, ${color} 10%, var(--surface))` : "var(--surface)",
+                                  boxShadow: on ? `0 12px 30px -18px ${color}` : "none",
                                 }}
                               >
-                                {u.role === "admin" ? <IShield size={16} /> : <IRegister size={16} />}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-xs font-bold truncate">{u.name}</span>
-                                <span className="block text-[10px] text-faint font-mono truncate">
-                                  @{u.username} · {pw ? "password bawaan terdeteksi" : "password khusus"}
+                                <span
+                                  className="w-9 h-9 rounded-xl grid place-items-center shrink-0 transition-transform duration-300 group-hover:scale-110"
+                                  style={{
+                                    color: on ? "var(--accent-ink)" : color,
+                                    background: on
+                                      ? `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 60%, #000))`
+                                      : `color-mix(in srgb, ${color} 14%, transparent)`,
+                                  }}
+                                >
+                                  {u.role === "admin" ? <IShield size={16} /> : <IRegister size={16} />}
                                 </span>
-                              </span>
-                              <span className="text-[10px] font-bold shrink-0" style={{ color: on ? color : "var(--faint)" }}>
-                                {on ? (filling ? "mengetik…" : pw ? "terisi ✓" : "isi password") : <IArrowRight size={14} />}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-xs font-bold truncate">{u.name}</span>
+                                  <span className="block text-[10px] text-faint font-mono truncate">
+                                    @{u.username} · {pw ? "password bawaan terdeteksi" : "password khusus"}
+                                  </span>
+                                </span>
+                                <span className="text-[10px] font-bold shrink-0" style={{ color: on ? color : "var(--faint)" }}>
+                                  {on ? (filling ? "mengetik…" : pw ? "terisi ✓" : "isi password") : <IArrowRight size={14} />}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </form>
               ) : (
                 <div className="space-y-4">

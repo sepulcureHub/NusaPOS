@@ -97,7 +97,9 @@ export type Action =
   | { type: "SET_TABLE_ACTIVE"; ids: string[]; active: boolean }
   | { type: "FREE_TABLE"; id: string }
   | { type: "SET_NOTIF_READ"; ts: number }
-  | { type: "CLEAR_NOTIFS" };
+  | { type: "CLEAR_NOTIFS" }
+  // ═══ LIVE: injeksi user dari Supabase Auth ke store ═══
+  | { type: "HYDRATE_LIVE"; user: User; settings: Partial<Settings> };
 
 const initial: AppState = {
   hydrated: false, products: [], transactions: [], customers: [], held: [], views: [],
@@ -161,6 +163,18 @@ function core(state: AppState, a: Action): AppState {
     };
     case "RESET": return { ...a.data, users: state.users, session: state.session, memberSession: null, hydrated: true };
     case "WIPE_DEMO": return { ...state, ...emptyDemo(state.settings, state.tables), hydrated: true };
+
+    // ═══ LIVE: injeksi user Supabase ke store ═══
+    case "HYDRATE_LIVE": {
+      const { user, settings } = a;
+      return {
+        ...state,
+        users: [user],
+        session: { userId: user.id, since: Date.now() },
+        settings: { ...state.settings, ...settings },
+        hydrated: true,
+      };
+    }
 
     case "ADD_PRODUCT": return { ...state, products: [a.product, ...state.products] };
     case "UPDATE_PRODUCT": return { ...state, products: state.products.map((p) => (p.id === a.product.id ? a.product : p)) };
@@ -408,6 +422,12 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
   let note: { kind: NotifKind; title: string; detail?: string; actor?: string } | null = null;
 
   switch (a.type) {
+    // ═══ LIVE: catat login via Supabase Auth ═══
+    case "HYDRATE_LIVE": {
+      note = { kind: "auth", title: "Masuk ke sistem (live)", detail: `${a.user.name} (@${a.user.username}) · ${a.user.role}`, actor: a.user.name };
+      break;
+    }
+
     case "LOGIN": {
       const u = state.users.find((x) => x.id === a.userId);
       note = { kind: "auth", title: `Masuk ke sistem`, detail: `${u?.name ?? a.userId} (@${u?.username ?? "?"})`, actor: u?.name };
@@ -472,7 +492,7 @@ function annotate(state: AppState, next: AppState, a: Action): AppState {
     case "ADD_USER": note = { kind: "user", title: `Akun dibuat: ${a.user.name}`, detail: `@${a.user.username}`, actor: actorOf(state) }; break;
     case "UPDATE_USER": note = { kind: "user", title: `Akun diperbarui: ${a.user.name}`, actor: actorOf(state) }; break;
     case "DELETE_USERS": note = { kind: "user", title: `${a.ids.length} akun dihapus`, actor: actorOf(state) }; break;
-    case "SET_USER_ACTIVE": note = { kind: "user", title: `${a.ids.length} akun ${a.active ? "diaktifkan" : "dinonaktifkan"}`, actor: actorOf(state) }; break;
+    case "SET_USER_ACTIVE": note = { kind: "user", title: `${a.ids.length} akun ${a.active ? "diaktifkan" : "dinononaktifkan"}`, actor: actorOf(state) }; break;
 
     case "ADD_SHIFT": note = { kind: "shift", title: "Jadwal shift ditambahkan", actor: actorOf(state) }; break;
     case "UPDATE_SHIFT": note = { kind: "shift", title: "Jadwal shift diperbarui", actor: actorOf(state) }; break;

@@ -5,46 +5,23 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth, useStore } from "@/lib/store";
 import { useToast } from "@/components/Toasts";
 import { sfx } from "@/lib/sound";
+import { getCatalog } from "@/app/actions/catalog";
+import { recordSale } from "@/app/actions/sale";
 import type {
-  Customer,
-  DiningTable,
-  Discount,
-  HeldOrder,
-  OrderType,
-  PayMethod,
-  Product,
-  Settings,
-  Transaction,
-  TxItem,
+  Customer, DiningTable, Discount, HeldOrder, OrderType,
+  PayMethod, Product, Settings, Transaction, TxItem,
 } from "@/lib/types";
 import { CATEGORIES, CATEGORY_COLORS } from "@/lib/types";
 import { WALK_IN_CUSTOMER } from "@/lib/demo-data";
 import { calcTotals, nextTxId, num, relTime, rupiah, uid } from "@/lib/format";
 import {
-  DAY_FULL,
-  DAY_SHORT,
-  cartSavings,
-  discountLabel,
-  effectivePrice,
-  hasDiscount,
-  isAvailableToday,
-  isLimited,
-  itemSavings,
-  nextAvailableDay,
-  nextPromoDay,
-  promoLabel,
-  stockOf,
-  toTxItem,
-  todayPromo,
+  DAY_FULL, DAY_SHORT, cartSavings, discountLabel, effectivePrice,
+  hasDiscount, isAvailableToday, isLimited, itemSavings, nextAvailableDay,
+  nextPromoDay, promoLabel, stockOf, toTxItem, todayPromo,
 } from "@/lib/pricing";
 import {
-  TIER_COLOR,
-  initials,
-  isBirthday,
-  memberDiscountPct,
-  pointsFor,
-  tierOf,
-  totalTierPct,
+  TIER_COLOR, initials, isBirthday, memberDiscountPct, pointsFor,
+  tierOf, totalTierPct,
 } from "@/lib/member";
 import { openSessionOf } from "@/lib/shift";
 import { shiftEligible } from "@/lib/auth";
@@ -55,44 +32,15 @@ import { MemberPicker } from "@/components/MemberPicker";
 import { MemberBenefitsModal } from "@/components/MemberBenefits";
 import { TableGrid } from "@/components/TableGrid";
 import {
-  Badge,
-  Button,
-  Chip,
-  Drawer,
-  EmptyState,
-  IconBtn,
-  Input,
-  Modal,
-  PageSkel,
-  Segmented,
+  Badge, Button, Chip, Drawer, EmptyState, IconBtn, Input, Modal,
+  PageSkel, Segmented,
 } from "@/components/ui";
 import { KasirTestBanner } from "@/components/KasirTestBanner";
 import { QRISCenter } from "@/components/QRISCenter";
 import {
-  IBox,
-  ICalendar,
-  ICart,
-  ICard,
-  ICash,
-  ICheckCircle,
-  IHeart,
-  IImage,
-  IInfo,
-  IMenu,
-  IMinus,
-  IPause,
-  IPercent,
-  IPlus,
-  IQR,
-  IShield,
-  ISparkle,
-  IStar,
-  IStore,
-  ITag,
-  ITrash,
-  IUser,
-  IUserPlus,
-  IX,
+  IBox, ICalendar, ICart, ICard, ICash, ICheckCircle, IHeart, IImage,
+  IInfo, IMenu, IMinus, IPause, IPercent, IPlus, IQR, IShield, ISparkle,
+  IStar, IStore, ITag, ITrash, IUser, IUserPlus, IX,
 } from "@/components/icons";
 
 type Density = "ringkas" | "standar" | "besar";
@@ -179,6 +127,10 @@ function Kasir() {
   const router = useRouter();
   const sp = useSearchParams();
 
+  const LIVE = process.env.NEXT_PUBLIC_DATA_MODE === "live";
+  /* Mode uji admin HANYA ada di demo. Di live, admin jual beneran. */
+  const isTestMode = !LIVE && isAdmin;
+
   const [q, setQ] = useState(sp.get("q") ?? "");
   const [cat, setCat] = useState("Semua");
   const [onlyToday, setOnlyToday] = useState(true);
@@ -198,62 +150,83 @@ function Kasir() {
 
   const [quick, setQuick] = useState<Product | null>(null);
   const [lastTx, setLastTx] = useState<Transaction | null>(null);
-
-  /* Order ditahan khusus admin mode uji: hanya lokal, tidak masuk state sistem. */
   const [localHeld, setLocalHeld] = useState<HeldOrder[]>([]);
 
-  const [density, setDensity] = usePref<Density>(
-    "nusapos:pos-density",
-    "standar",
-  );
+  const [density, setDensity] = usePref<Density>("nusapos:pos-density", "standar");
   const [layout, setLayout] = usePref<Layout>("nusapos:pos-layout", "kartu");
   const [fit, setFit] = usePref<Fit>("nusapos:pos-fit", "cover");
 
-  useEffect(() => {
-    setQ(sp.get("q") ?? "");
-  }, [sp]);
+  /* ── LIVE: state katalog dari server ── */
+  const [liveProducts, setLiveProducts] = useState<Product[]>([]);
+  const [liveCustomers, setLiveCustomers] = useState<Customer[]>([]);
+  const [liveTables, setLiveTables] = useState<DiningTable[]>([]);
+  const [liveSettings, setLiveSettings] = useState<Partial<Settings> | null>(null);
+  const [liveReady, setLiveReady] = useState(false);
 
   useEffect(() => {
-    if (sp.get("held") && state.hydrated) setHeldOpen(true);
-  }, [sp, state.hydrated]);
+    if (!LIVE) return;
+    let alive = true;
+    (async () => {
+      const data = await getCatalog();
+      if (!alive) return;
+      if ("error" in data) {
+        router.replace("/login");
+        return;
+      }
+      setLiveProducts(data.products);
+      setLiveCustomers(data.customers);
+      setLiveTables(data.tables);
+      setLiveSettings(data.settings);
+      setLiveReady(true);
+    })();
+    return () => { alive = false; };
+  }, [LIVE, router]);
 
-  const settings = state.settings;
+  /* ── Sumber data ter-derive: LIVE = server, DEMO = store ── */
+  const products = LIVE ? liveProducts : state.products;
+  const customers = LIVE ? liveCustomers : state.customers;
+  const tables = LIVE ? liveTables : state.tables;
+  const settings: Settings = useMemo(
+  () => LIVE
+    ? { ...state.settings, ...(liveSettings ?? {}) }
+    : state.settings,
+  [LIVE, state.settings, liveSettings],
+);
+  const ready = LIVE ? liveReady : state.hydrated;
+
+  useEffect(() => { setQ(sp.get("q") ?? ""); }, [sp]);
+  useEffect(() => {
+    if (sp.get("held") && ready) setHeldOpen(true);
+  }, [sp, ready]);
+
   const customer =
-    state.customers.find((c) => c.id === custId) ??
-    state.customers[0] ??
-    WALK_IN_CUSTOMER;
+    customers.find((c) => c.id === custId) ??
+    (LIVE ? WALK_IN_CUSTOMER : customers[0] ?? WALK_IN_CUSTOMER);
   const d = DENSITY[density] ?? DENSITY.standar;
   const myShift =
     user && shiftEligible(user)
       ? openSessionOf(state.shiftSessions, user.id)
       : null;
 
-  const heldList = isAdmin ? localHeld : state.held;
-
+  const heldList = isTestMode ? localHeld : state.held;
   const mPct = memberDiscountPct(customer, settings);
-
-  const activeTables = state.tables.filter((t) => t.active);
+  const activeTables = tables.filter((t) => t.active);
   const freeTableCount = activeTables.filter((t) => t.status === "kosong").length;
 
   const stockById = (id: string) => {
-    const p = state.products.find((x) => x.id === id);
-    return p ? stockOf(p, state.products) : 999;
+    const p = products.find((x) => x.id === id);
+    return p ? stockOf(p, products) : 999;
   };
-
-  const inCart = (id: string) =>
-    items.find((i) => i.productId === id)?.qty ?? 0;
+  const inCart = (id: string) => items.find((i) => i.productId === id)?.qty ?? 0;
 
   const promoTodayCount = useMemo(
-    () =>
-      state.products.filter(
-        (p) => p.active && !!todayPromo(p) && isAvailableToday(p),
-      ).length,
-    [state.products],
+    () => products.filter((p) => p.active && !!todayPromo(p) && isAvailableToday(p)).length,
+    [products],
   );
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return state.products.filter(
+    return products.filter(
       (p) =>
         p.active &&
         (cat === "Semua" ||
@@ -265,7 +238,7 @@ function Kasir() {
           p.sku.toLowerCase().includes(s) ||
           p.category.toLowerCase().includes(s)),
     );
-  }, [state.products, q, cat, onlyToday, promoOnly]);
+  }, [products, q, cat, onlyToday, promoOnly]);
 
   const totals = useMemo(
     () => calcTotals(items, disc, settings, mPct),
@@ -274,9 +247,8 @@ function Kasir() {
   const savings = useMemo(() => cartSavings(items), [items]);
   const itemCount = items.reduce((a, i) => a + i.qty, 0);
 
-  /* Admin mode uji tidak menghasilkan poin sungguhan. */
   const willEarn =
-    customer.member && settings.memberEnabled && !isAdmin
+    customer.member && settings.memberEnabled && !isTestMode
       ? pointsFor(totals.total, settings)
       : 0;
 
@@ -285,21 +257,17 @@ function Kasir() {
       const nd = nextAvailableDay(p);
       sfx.error();
       push({
-        msg: `${p.name} tidak tersedia hari ini${
-          nd !== null ? ` — kembali hari ${DAY_FULL[nd]}` : ""
-        }`,
+        msg: `${p.name} tidak tersedia hari ini${nd !== null ? ` — kembali hari ${DAY_FULL[nd]}` : ""}`,
         type: "err",
       });
       return;
     }
-
-    const max = stockOf(p, state.products);
+    const max = stockOf(p, products);
     if (max <= 0) {
       sfx.error();
       push({ msg: `${p.name} sudah habis`, type: "err" });
       return;
     }
-
     const ex = items.find((i) => i.productId === p.id);
     if (ex) {
       if (ex.qty >= max) {
@@ -307,34 +275,24 @@ function Kasir() {
         push({ msg: `Stok ${p.name} tinggal ${max}`, type: "err" });
         return;
       }
-      setItems(
-        items.map((i) => (i.productId === p.id ? { ...i, qty: i.qty + 1 } : i)),
-      );
+      setItems(items.map((i) => (i.productId === p.id ? { ...i, qty: i.qty + 1 } : i)));
     } else {
-      setItems([...items, toTxItem(p, state.products, 1)]);
+      setItems([...items, toTxItem(p, products, 1)]);
     }
-
     sfx.add();
   };
 
   const setQty = (id: string, delta: number) => {
     const it = items.find((i) => i.productId === id);
     if (!it) return;
-
     const max = stockById(id);
     const next = it.qty + delta;
-
-    if (next <= 0) {
-      remove(id);
-      return;
-    }
-
+    if (next <= 0) { remove(id); return; }
     if (next > max) {
       sfx.error();
       push({ msg: `Stok ${it.name} tinggal ${max}`, type: "err" });
       return;
     }
-
     setItems(items.map((i) => (i.productId === id ? { ...i, qty: next } : i)));
     sfx.tap();
   };
@@ -350,43 +308,31 @@ function Kasir() {
     setItems([]);
     sfx.remove();
     push({
-      msg: "Keranjang dikosongkan",
-      type: "info",
-      actionLabel: "Urungkan",
-      onAction: () => setItems(prev),
+      msg: "Keranjang dikosongkan", type: "info",
+      actionLabel: "Urungkan", onAction: () => setItems(prev),
     });
   };
 
   const hold = () => {
     if (!items.length) return;
-
     const order: HeldOrder = {
-      id: uid(),
-      ts: Date.now(),
+      id: uid(), ts: Date.now(),
       label: `${customer.name} • ${itemCount} item`,
-      items,
-      customerId: custId,
-      discount: disc,
+      items, customerId: custId, discount: disc,
     };
-
-    if (isAdmin) {
+    if (isTestMode) {
       setLocalHeld((prev) => [order, ...prev]);
       push({
         msg: "Order ditahan dalam mode uji — tidak disimpan ke sistem",
-        type: "info",
-        actionLabel: "Lihat",
-        onAction: () => setHeldOpen(true),
+        type: "info", actionLabel: "Lihat", onAction: () => setHeldOpen(true),
       });
     } else {
       dispatch({ type: "HOLD", order });
       push({
-        msg: "Order ditahan",
-        type: "ok",
-        actionLabel: "Lihat",
-        onAction: () => setHeldOpen(true),
+        msg: "Order ditahan", type: "ok",
+        actionLabel: "Lihat", onAction: () => setHeldOpen(true),
       });
     }
-
     setItems([]);
     setDisc({ type: "pct", value: 0 });
     setCustId(WALK_IN_CUSTOMER.id);
@@ -397,45 +343,35 @@ function Kasir() {
     const capped = o.items
       .map((i) => ({ ...i, qty: Math.min(i.qty, stockById(i.productId)) }))
       .filter((i) => i.qty > 0);
-
     setItems(capped);
     setCustId(o.customerId);
     setDisc(o.discount);
-
-    if (isAdmin) {
-      setLocalHeld((prev) => prev.filter((x) => x.id !== o.id));
-    } else {
-      dispatch({ type: "REMOVE_HELD", id: o.id });
-    }
-
+    if (isTestMode) setLocalHeld((prev) => prev.filter((x) => x.id !== o.id));
+    else dispatch({ type: "REMOVE_HELD", id: o.id });
     setHeldOpen(false);
     sfx.add();
     push({ msg: "Order dilanjutkan", type: "ok" });
   };
 
   const removeHeld = (o: HeldOrder) => {
-    if (isAdmin) {
+    if (isTestMode) {
       setLocalHeld((prev) => prev.filter((x) => x.id !== o.id));
       sfx.remove();
       push({
-        msg: "Order uji dihapus",
-        type: "info",
-        actionLabel: "Urungkan",
-        onAction: () => setLocalHeld((prev) => [o, ...prev]),
+        msg: "Order uji dihapus", type: "info",
+        actionLabel: "Urungkan", onAction: () => setLocalHeld((prev) => [o, ...prev]),
       });
     } else {
       dispatch({ type: "REMOVE_HELD", id: o.id });
       sfx.remove();
       push({
-        msg: "Order ditahan dihapus",
-        type: "info",
-        actionLabel: "Urungkan",
-        onAction: () => dispatch({ type: "HOLD", order: o }),
+        msg: "Order ditahan dihapus", type: "info",
+        actionLabel: "Urungkan", onAction: () => dispatch({ type: "HOLD", order: o }),
       });
     }
   };
 
-  const confirmPay = (
+  const confirmPay = async (
     method: PayMethod,
     tendered: number,
     orderType: OrderType,
@@ -443,11 +379,79 @@ function Kasir() {
   ) => {
     const table =
       orderType === "dinein" && tableId
-        ? state.tables.find((t) => t.id === tableId) ?? null
+        ? tables.find((t) => t.id === tableId) ?? null
         : null;
 
+    /* ══ LIVE: jual via server — harga & total OTORITATIF di DB ══ */
+    if (LIVE) {
+      const res = await recordSale({
+        items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+        customerId: customer.member ? customer.id : null,
+        method,
+        tendered,
+        orderType,
+        tableId: orderType === "dinein" ? tableId : null,
+        discount: disc,
+        isTest: false,
+      });
+
+      if (!res.ok) {
+        sfx.error();
+        push({ msg: res.error ?? "Transaksi gagal", type: "err", dur: 5200 });
+        return; /* payment sheet tetap terbuka → user bisa retry/batal */
+      }
+
+      /* refresh katalog: stok turun, meja terisi, poin member naik — dari DB */
+      const cat2 = await getCatalog();
+      if (!("error" in cat2)) {
+        setLiveProducts(cat2.products);
+        setLiveCustomers(cat2.customers);
+        setLiveTables(cat2.tables);
+        setLiveSettings(cat2.settings);
+      }
+
+      const tx: Transaction = {
+        id: res.txNumber ?? res.id ?? `LIVE-${uid()}`,
+        ts: Date.now(),
+        items,
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        memberDiscount: totals.memberDiscount,
+        memberPoints: willEarn,
+        memberNo: customer.member ? customer.memberNo : undefined,
+        memberTier: customer.member ? tierOf(customer.spend ?? 0, settings) : undefined,
+        tax: totals.tax,
+        service: totals.service,
+        total: totals.total,
+        method,
+        tendered,
+        change: method === "Tunai" ? tendered - totals.total : 0,
+        customerId: customer.id,
+        customerName: customer.name,
+        cashier: user?.name ?? settings.cashier,
+        status: "Selesai",
+        shiftId: myShift?.id,
+        isTest: false,
+        orderType,
+        tableId: orderType === "dinein" ? tableId : null,
+        tableLabel: table?.label ?? null,
+      };
+
+      setLastTx(tx);
+      sfx.success();
+      if (method === "Tunai") sfx.cash();
+      if (orderType === "dinein" && table) {
+        push({ msg: `${table.label} sekarang terisi atas nama ${customer.name}`, type: "ok", dur: 4200 });
+      }
+      if (willEarn > 0) {
+        push({ msg: `${customer.name} mendapat +${willEarn} poin member`, type: "ok", dur: 4200 });
+      }
+      return;
+    }
+
+    /* ══ DEMO: mekanisme lama, TIDAK DIUBAH ══ */
     const tx: Transaction = {
-      id: isAdmin ? `TEST-${uid()}` : nextTxId(state.transactions),
+      id: isTestMode ? `TEST-${uid()}` : nextTxId(state.transactions),
       ts: Date.now(),
       items,
       subtotal: totals.subtotal,
@@ -455,9 +459,7 @@ function Kasir() {
       memberDiscount: totals.memberDiscount,
       memberPoints: willEarn,
       memberNo: customer.member ? customer.memberNo : undefined,
-      memberTier: customer.member
-        ? tierOf(customer.spend ?? 0, settings)
-        : undefined,
+      memberTier: customer.member ? tierOf(customer.spend ?? 0, settings) : undefined,
       tax: totals.tax,
       service: totals.service,
       total: totals.total,
@@ -469,41 +471,29 @@ function Kasir() {
       cashier: user?.name ?? settings.cashier,
       status: "Selesai",
       shiftId: myShift?.id,
-      isTest: isAdmin,
+      isTest: isTestMode,
       orderType,
       tableId: orderType === "dinein" ? tableId : null,
       tableLabel: table?.label ?? null,
     };
 
-    /* Admin: tidak dispatch ke sistem sama sekali. Hanya local lastTx untuk preview struk uji. */
-    if (!isAdmin) {
-      dispatch({ type: "ADD_TX", tx });
-    }
+    if (!isTestMode) dispatch({ type: "ADD_TX", tx });
 
     setLastTx(tx);
     sfx.success();
     if (method === "Tunai") sfx.cash();
 
-    if (isAdmin) {
+    if (isTestMode) {
       push({
         msg: "Transaksi uji selesai — tidak tercatat di riwayat, stok, poin, shift, atau meja.",
-        type: "info",
-        dur: 5200,
+        type: "info", dur: 5200,
       });
     } else {
       if (orderType === "dinein" && table) {
-        push({
-          msg: `${table.label} sekarang terisi atas nama ${customer.name}`,
-          type: "ok",
-          dur: 4200,
-        });
+        push({ msg: `${table.label} sekarang terisi atas nama ${customer.name}`, type: "ok", dur: 4200 });
       }
       if (willEarn > 0) {
-        push({
-          msg: `${customer.name} mendapat +${willEarn} poin member`,
-          type: "ok",
-          dur: 4200,
-        });
+        push({ msg: `${customer.name} mendapat +${willEarn} poin member`, type: "ok", dur: 4200 });
       }
     }
   };
@@ -518,37 +508,21 @@ function Kasir() {
     }
   };
 
-  if (!state.hydrated) return <PageSkel />;
+  if (!ready) return <PageSkel />;
 
   const cart = (
     <CartPanel
-      items={items}
-      customer={customer}
-      settings={settings}
-      mPct={mPct}
-      willEarn={willEarn}
-      onPickCustomer={() => setPickerOpen(true)}
-      onRegister={() => setMemberFormOpen(true)}
-      onBenefits={() => setBenefitOpen(true)}
-      disc={disc}
-      setDisc={setDisc}
-      totals={totals}
-      savings={savings}
-      setQty={setQty}
-      remove={remove}
-      onHold={hold}
-      onClear={clearCart}
-      onCharge={() => {
-        setCartOpen(false);
-        setPayOpen(true);
-      }}
+      items={items} customer={customer} settings={settings} mPct={mPct}
+      willEarn={willEarn} onPickCustomer={() => setPickerOpen(true)}
+      onRegister={() => setMemberFormOpen(true)} onBenefits={() => setBenefitOpen(true)}
+      disc={disc} setDisc={setDisc} totals={totals} savings={savings}
+      setQty={setQty} remove={remove} onHold={hold} onClear={clearCart}
+      onCharge={() => { setCartOpen(false); setPayOpen(true); }}
       stockOf={stockById}
     />
   );
 
-  const hiddenToday = state.products.filter(
-    (p) => p.active && !isAvailableToday(p),
-  ).length;
+  const hiddenToday = products.filter((p) => p.active && !isAvailableToday(p)).length;
 
   return (
     <div className="lg:h-[calc(100dvh-172px)] lg:grid lg:grid-cols-[minmax(0,1fr)_396px] lg:gap-6">
@@ -558,227 +532,146 @@ function Kasir() {
             <h1 className="font-display font-bold text-xl flex items-center gap-2">
               Ruang Kasir
               {user && (
-                <Badge color={isAdmin ? "var(--accent)" : "var(--amber)"}>
-                  {isAdmin ? <IShield size={10} /> : <IUser size={10} />}{" "}
+                <Badge color={isTestMode ? "var(--accent)" : "var(--amber)"}>
+                  {isTestMode ? <IShield size={10} /> : <IUser size={10} />}{" "}
                   {user.name.split(" ")[0]}
+                </Badge>
+              )}
+              {LIVE && (
+                <Badge color="var(--pandan)">
+                  <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: "currentColor" }} />
+                  MODE LIVE
                 </Badge>
               )}
             </h1>
             <p className="text-[11px] text-faint mt-0.5 hidden xl:block">
               <span className="kbd">/</span> cari ·{" "}
-              <span className="kbd">Enter</span> tambah hasil pertama · benefit
-              member otomatis
+              <span className="kbd">Enter</span> tambah hasil pertama · benefit member otomatis
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setTablesOpen(true);
-                sfx.tap();
-              }}
-              className="chip"
-            >
+            <button onClick={() => { setTablesOpen(true); sfx.tap(); }} className="chip">
               <IStore size={12} /> Meja{" "}
-              <span className="opacity-70">
-                {freeTableCount}/{activeTables.length}
-              </span>
+              <span className="opacity-70">{freeTableCount}/{activeTables.length}</span>
             </button>
-
-            <button
-              onClick={() => {
-                setBenefitOpen(true);
-                sfx.tap();
-              }}
-              className="chip"
-            >
+            <button onClick={() => { setBenefitOpen(true); sfx.tap(); }} className="chip">
               <IHeart size={12} /> Benefit member
             </button>
-
             {promoTodayCount > 0 && (
               <button
-                onClick={() => {
-                  setPromoOnly((v) => !v);
-                  setOnlyToday(true);
-                  sfx.tap();
-                }}
+                onClick={() => { setPromoOnly((v) => !v); setOnlyToday(true); sfx.tap(); }}
                 className={`chip ${promoOnly ? "chip-on" : ""}`}
               >
-                <IPercent size={12} /> Promo{" "}
-                <span className="opacity-70">{promoTodayCount}</span>
+                <IPercent size={12} /> Promo <span className="opacity-70">{promoTodayCount}</span>
               </button>
             )}
-
             <Button variant="ghost" size="sm" onClick={() => setHeldOpen(true)}>
               <IPause size={14} /> Ditahan
-              {heldList.length > 0 && (
-                <Badge color="var(--amber)">{heldList.length}</Badge>
-              )}
+              {heldList.length > 0 && <Badge color="var(--amber)">{heldList.length}</Badge>}
             </Button>
           </div>
         </div>
 
-        {isAdmin && (
+        {isTestMode && (
           <div className="mt-3 rise" style={{ animationDelay: "35ms" }}>
             <KasirTestBanner />
           </div>
         )}
+        {LIVE && (
+          <div className="mt-3 rise" style={{ animationDelay: "35ms" }}>
+            <div
+              className="rounded-xl border px-3 py-2.5 text-[11px] flex items-start gap-2"
+              style={{
+                borderColor: "color-mix(in srgb, var(--pandan) 38%, transparent)",
+                background: "color-mix(in srgb, var(--pandan) 8%, transparent)",
+              }}
+            >
+              <IShield size={14} className="shrink-0 mt-0.5" style={{ color: "var(--pandan)" }} />
+              <span className="text-mute">
+                <b className="text-ink">Mode live.</b> Transaksi tersimpan ke database server (atomik, anti-curang).
+                Shift kasir & sinkron penuh member/meja menyusul di fase berikutnya.
+              </span>
+            </div>
+          </div>
+        )}
 
-        <div
-          className="flex flex-wrap items-center gap-2 mt-3 rise"
-          style={{ animationDelay: "50ms" }}
-        >
+        <div className="flex flex-wrap items-center gap-2 mt-3 rise" style={{ animationDelay: "50ms" }}>
           <div className="grow min-w-[220px]">
             <SearchField
-              value={q}
-              onChange={setQ}
-              size="lg"
-              shortcut={
-                payOpen || quick || pickerOpen || benefitOpen ? undefined : "/"
-              }
-              count={filtered.length}
-              countLabel="produk"
-              ariaLabel="Cari produk kasir"
+              value={q} onChange={setQ} size="lg"
+              shortcut={payOpen || quick || pickerOpen || benefitOpen ? undefined : "/"}
+              count={filtered.length} countLabel="produk" ariaLabel="Cari produk kasir"
               placeholder="Cari nama produk, SKU, atau kategori…"
-              onEnter={() => {
-                if (filtered[0]) add(filtered[0]);
-              }}
+              onEnter={() => { if (filtered[0]) add(filtered[0]); }}
               onEscape={() => setQ("")}
             />
           </div>
-
           <div className="flex items-center gap-1.5">
             <Segmented
               value={density}
-              onChange={(v) => {
-                setDensity(v as Density);
-                sfx.tap();
-              }}
+              onChange={(v) => { setDensity(v as Density); sfx.tap(); }}
               options={[
                 { v: "ringkas", l: <span title="Kartu ringkas">S</span> },
                 { v: "standar", l: <span title="Kartu standar">M</span> },
                 { v: "besar", l: <span title="Kartu besar">L</span> },
               ]}
             />
-            <IconBtn
-              label="Tampilan kartu"
-              active={layout === "kartu"}
-              onClick={() => {
-                setLayout("kartu");
-                sfx.tap();
-              }}
-            >
+            <IconBtn label="Tampilan kartu" active={layout === "kartu"} onClick={() => { setLayout("kartu"); sfx.tap(); }}>
               <IBox size={16} />
             </IconBtn>
-            <IconBtn
-              label="Tampilan daftar"
-              active={layout === "daftar"}
-              onClick={() => {
-                setLayout("daftar");
-                sfx.tap();
-              }}
-            >
+            <IconBtn label="Tampilan daftar" active={layout === "daftar"} onClick={() => { setLayout("daftar"); sfx.tap(); }}>
               <IMenu size={16} />
             </IconBtn>
             <IconBtn
               label={fit === "cover" ? "Foto memenuhi kotak" : "Foto utuh"}
               active={fit === "contain"}
-              onClick={() => {
-                setFit(fit === "cover" ? "contain" : "cover");
-                sfx.tap();
-              }}
+              onClick={() => { setFit(fit === "cover" ? "contain" : "cover"); sfx.tap(); }}
             >
               <IImage size={16} />
             </IconBtn>
           </div>
         </div>
 
-        <div
-          className="flex gap-2 mt-2.5 overflow-x-auto pb-1 rise"
-          style={{ animationDelay: "90ms" }}
-        >
-          <Chip active={cat === "Semua"} onClick={() => setCat("Semua")}>
-            Semua
-          </Chip>
+        <div className="flex gap-2 mt-2.5 overflow-x-auto pb-1 rise" style={{ animationDelay: "90ms" }}>
+          <Chip active={cat === "Semua"} onClick={() => setCat("Semua")}>Semua</Chip>
           <Chip active={cat === "Paket"} onClick={() => setCat("Paket")}>
             <ITag size={12} /> Paket{" "}
-            <span className="opacity-60">
-              {
-                state.products.filter((p) => p.active && p.kind === "bundle")
-                  .length
-              }
-            </span>
+            <span className="opacity-60">{products.filter((p) => p.active && p.kind === "bundle").length}</span>
           </Chip>
           {CATEGORIES.map((c) => (
             <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ background: CATEGORY_COLORS[c] }}
-              />{" "}
-              {c}
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: CATEGORY_COLORS[c] }} /> {c}
             </Chip>
           ))}
           <span className="w-px shrink-0 bg-line mx-1" />
-          <Chip
-            active={onlyToday}
-            onClick={() => {
-              setOnlyToday(!onlyToday);
-              sfx.tap();
-            }}
-          >
+          <Chip active={onlyToday} onClick={() => { setOnlyToday(!onlyToday); sfx.tap(); }}>
             <ICalendar size={12} /> Tersedia hari ini
-            {!onlyToday && hiddenToday > 0 && (
-              <span className="opacity-60">+{hiddenToday}</span>
-            )}
+            {!onlyToday && hiddenToday > 0 && <span className="opacity-60">+{hiddenToday}</span>}
           </Chip>
         </div>
 
         <div className="mt-3 overflow-y-auto pr-1 lg:flex-1 min-h-0 pb-28 lg:pb-2">
           {filtered.length === 0 ? (
             <EmptyState
-              emoji="🔍"
-              title="Tidak ada produk cocok"
+              emoji="🔍" title="Tidak ada produk cocok"
               desc={
-                state.products.length === 0
+                products.length === 0
                   ? "Katalog masih kosong. Administrator perlu menambahkan produk dulu."
                   : "Coba kata kunci lain, atau longgarkan filter hari & promo."
               }
             >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setQ("");
-                  setCat("Semua");
-                  setOnlyToday(false);
-                  setPromoOnly(false);
-                }}
-              >
+              <Button variant="ghost" size="sm" onClick={() => { setQ(""); setCat("Semua"); setOnlyToday(false); setPromoOnly(false); }}>
                 Reset Filter
               </Button>
             </EmptyState>
           ) : layout === "kartu" ? (
-            <div
-              className="grid gap-3 content-start"
-              style={{
-                gridTemplateColumns: `repeat(auto-fill, minmax(${d.min}px, 1fr))`,
-              }}
-            >
+            <div className="grid gap-3 content-start" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${d.min}px, 1fr))` }}>
               {filtered.map((p, i) => (
                 <ProductCard
-                  key={p.id}
-                  p={p}
-                  products={state.products}
-                  settings={settings}
-                  fit={fit}
-                  d={d}
-                  qty={inCart(p.id)}
-                  index={i}
-                  onAdd={() => add(p)}
-                  onInfo={() => {
-                    setQuick(p);
-                    sfx.tap();
-                  }}
+                  key={p.id} p={p} products={products} settings={settings} fit={fit} d={d}
+                  qty={inCart(p.id)} index={i} onAdd={() => add(p)}
+                  onInfo={() => { setQuick(p); sfx.tap(); }}
                 />
               ))}
             </div>
@@ -786,18 +679,9 @@ function Kasir() {
             <div className="space-y-2">
               {filtered.map((p, i) => (
                 <ProductRow
-                  key={p.id}
-                  p={p}
-                  products={state.products}
-                  settings={settings}
-                  fit={fit}
-                  qty={inCart(p.id)}
-                  index={i}
-                  onAdd={() => add(p)}
-                  onInfo={() => {
-                    setQuick(p);
-                    sfx.tap();
-                  }}
+                  key={p.id} p={p} products={products} settings={settings} fit={fit}
+                  qty={inCart(p.id)} index={i} onAdd={() => add(p)}
+                  onInfo={() => { setQuick(p); sfx.tap(); }}
                 />
               ))}
             </div>
@@ -805,10 +689,7 @@ function Kasir() {
         </div>
       </section>
 
-      <aside
-        className="hidden lg:flex flex-col card min-h-0 overflow-hidden rise"
-        style={{ animationDelay: "130ms" }}
-      >
+      <aside className="hidden lg:flex flex-col card min-h-0 overflow-hidden rise" style={{ animationDelay: "130ms" }}>
         {cart}
       </aside>
 
@@ -823,98 +704,48 @@ function Kasir() {
             </span>
             <span className="min-w-0">
               <span className="block text-[11px] text-faint font-bold">
-                {itemCount} item
-                {savings > 0 && ` · hemat ${rupiah(savings)}`}
+                {itemCount} item{savings > 0 && ` · hemat ${rupiah(savings)}`}
               </span>
-              <span className="block font-display font-bold text-sm truncate">
-                {rupiah(totals.total)}
-              </span>
+              <span className="block font-display font-bold text-sm truncate">{rupiah(totals.total)}</span>
             </span>
           </span>
-          <Button size="sm" onClick={() => setCartOpen(true)}>
-            Keranjang
-          </Button>
+          <Button size="sm" onClick={() => setCartOpen(true)}>Keranjang</Button>
         </div>
       )}
 
-      <Drawer
-        open={cartOpen}
-        onClose={() => setCartOpen(false)}
-        title={`Keranjang • ${itemCount} item`}
-      >
+      <Drawer open={cartOpen} onClose={() => setCartOpen(false)} title={`Keranjang • ${itemCount} item`}>
         <div className="-mx-5 -my-4 flex flex-col h-[70dvh]">{cart}</div>
       </Drawer>
 
       <Drawer
         open={heldOpen}
-        onClose={() => {
-          setHeldOpen(false);
-          if (sp.get("held")) router.replace("/kasir");
-        }}
+        onClose={() => { setHeldOpen(false); if (sp.get("held")) router.replace("/kasir"); }}
         title={`Order Ditahan (${heldList.length})`}
       >
         {heldList.length === 0 ? (
-          <EmptyState
-            emoji="⏸️"
-            title="Tidak ada order ditahan"
-            desc="Tahan order dari keranjang untuk dilanjutkan nanti."
-          />
+          <EmptyState emoji="⏸️" title="Tidak ada order ditahan" desc="Tahan order dari keranjang untuk dilanjutkan nanti." />
         ) : (
           <ul className="space-y-3">
             {heldList.map((o) => {
-              const oc =
-                state.customers.find((c) => c.id === o.customerId) ??
-                WALK_IN_CUSTOMER;
-              const t = calcTotals(
-                o.items,
-                o.discount,
-                settings,
-                memberDiscountPct(oc, settings),
-              );
+              const oc = customers.find((c) => c.id === o.customerId) ?? WALK_IN_CUSTOMER;
+              const t = calcTotals(o.items, o.discount, settings, memberDiscountPct(oc, settings));
               return (
-                <li
-                  key={o.id}
-                  className="rounded-2xl border border-line bg-surface p-4"
-                >
+                <li key={o.id} className="rounded-2xl border border-line bg-surface p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-bold truncate">{o.label}</p>
-                    <span className="text-[10px] text-faint shrink-0">
-                      {relTime(o.ts)}
-                    </span>
+                    <span className="text-[10px] text-faint shrink-0">{relTime(o.ts)}</span>
                   </div>
-
                   <div className="flex gap-1.5 mt-2">
                     {o.items.slice(0, 5).map((i) => (
-                      <ProductThumb
-                        key={i.productId}
-                        name={i.name}
-                        photo={i.photo}
-                        category={i.category}
-                        size={30}
-                        rounded={8}
-                      />
+                      <ProductThumb key={i.productId} name={i.name} photo={i.photo} category={i.category} size={30} rounded={8} />
                     ))}
-                    {o.items.length > 5 && (
-                      <span className="text-[10px] text-faint self-center">
-                        +{o.items.length - 5}
-                      </span>
-                    )}
+                    {o.items.length > 5 && <span className="text-[10px] text-faint self-center">+{o.items.length - 5}</span>}
                   </div>
-
                   <div className="flex items-center justify-between mt-3">
-                    <p className="font-display font-bold text-accent">
-                      {rupiah(t.total)}
-                    </p>
+                    <p className="font-display font-bold text-accent">{rupiah(t.total)}</p>
                     <div className="flex gap-2">
-                      <IconBtn
-                        label="Hapus order"
-                        onClick={() => removeHeld(o)}
-                      >
-                        <ITrash size={15} />
-                      </IconBtn>
-                      <Button size="sm" onClick={() => resume(o)}>
-                        Lanjutkan
-                      </Button>
+                      <IconBtn label="Hapus order" onClick={() => removeHeld(o)}><ITrash size={15} /></IconBtn>
+                      <Button size="sm" onClick={() => resume(o)}>Lanjutkan</Button>
                     </div>
                   </div>
                 </li>
@@ -925,37 +756,20 @@ function Kasir() {
       </Drawer>
 
       <QuickView
-        product={quick}
-        products={state.products}
-        transactions={state.transactions}
-        settings={settings}
-        qty={quick ? inCart(quick.id) : 0}
-        onAdd={(p) => add(p)}
-        onQty={(id, delta) => setQty(id, delta)}
-        onClose={() => setQuick(null)}
+        product={quick} products={products} transactions={state.transactions}
+        settings={settings} qty={quick ? inCart(quick.id) : 0}
+        onAdd={(p) => add(p)} onQty={(id, delta) => setQty(id, delta)} onClose={() => setQuick(null)}
       />
 
       <MemberPicker
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        currentId={custId}
-        onPick={(c) => setCustId(c.id)}
-        onRegister={() => setMemberFormOpen(true)}
+        open={pickerOpen} onClose={() => setPickerOpen(false)}
+        currentId={custId} onPick={(c) => setCustId(c.id)} onRegister={() => setMemberFormOpen(true)}
       />
-
-      <MemberForm
-        open={memberFormOpen}
-        edit={null}
-        onClose={() => setMemberFormOpen(false)}
-        onSaved={(c) => setCustId(c.id)}
-      />
+      <MemberForm open={memberFormOpen} edit={null} onClose={() => setMemberFormOpen(false)} onSaved={(c) => setCustId(c.id)} />
 
       <MemberBenefitsModal
-        open={benefitOpen}
-        onClose={() => setBenefitOpen(false)}
-        settings={settings}
-        canConfigure={isAdmin}
-        onConfigure={() => router.push("/member?tab=benefit")}
+        open={benefitOpen} onClose={() => setBenefitOpen(false)} settings={settings}
+        canConfigure={isAdmin} onConfigure={() => router.push("/member?tab=benefit")}
         roleNote={
           isAdmin
             ? "Kamu masuk sebagai administrator: mewarisi semua fitur kasir, dan satu-satunya peran yang boleh mengubah benefit member di halaman Member → Benefit Member. Transaksi di kasir admin bersifat uji."
@@ -964,29 +778,16 @@ function Kasir() {
       />
 
       <Modal
-        open={tablesOpen}
-        onClose={() => setTablesOpen(false)}
-        title="Ketersediaan meja"
-        wide
-        footer={
-          <div className="flex justify-end">
-            <Button onClick={() => setTablesOpen(false)}>Tutup</Button>
-          </div>
-        }
+        open={tablesOpen} onClose={() => setTablesOpen(false)} title="Ketersediaan meja" wide
+        footer={<div className="flex justify-end"><Button onClick={() => setTablesOpen(false)}>Tutup</Button></div>}
       >
-        <TableGrid tables={state.tables} />
+        <TableGrid tables={tables} />
       </Modal>
 
       <PaymentSheet
-        open={payOpen}
-        onClose={closePay}
-        totals={totals}
-        customerName={customer.name}
-        settings={settings}
-        lastTx={lastTx}
-        onConfirm={confirmPay}
-        isAdmin={isAdmin}
-        tables={state.tables}
+        open={payOpen} onClose={closePay} totals={totals} customerName={customer.name}
+        settings={settings} lastTx={lastTx} onConfirm={confirmPay}
+        isAdmin={isTestMode} tables={tables}
       />
     </div>
   );
