@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
+import { updateSession } from "@/lib/supabase/proxy";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Mode demo tetap zero-config: tidak menyentuh Supabase sama sekali.
   if (process.env.NEXT_PUBLIC_DATA_MODE !== "live") return NextResponse.next();
   return updateSession(request);

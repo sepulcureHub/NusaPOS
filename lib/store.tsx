@@ -814,8 +814,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   /* 4. Sinkron antar tab di browser yang sama (event `storage` hanya menembak tab lain). */
-  if (LIVE) return;
   useEffect(() => {
+    if (LIVE) return;
     if (!state.hydrated) return;
     const onStorage = (e: StorageEvent) => {
       if (e.key !== KEY) return;
